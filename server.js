@@ -25,16 +25,24 @@ app.use(express.json());
 // --- In-memory cache (respects free-tier rate limits) ---
 let cache = { at: 0, payload: null };
 
-function normStr(s) {
+function normTokens(s) {
   return String(s || '')
     .toLowerCase()
-    .replace(/[^a-z]/g, '');
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .sort()
+    .join('|');
 }
 
-function teamMatches(apiTeams, demoName, demoShort) {
-  const names = (apiTeams || []).map(normStr);
-  const want = [normStr(demoName), normStr(demoShort)].filter(Boolean);
-  return want.some((w) => w && names.some((n) => n.includes(w) || w.includes(n)));
+// Strict team matching on whole tokens: "India" must NOT match "India A".
+// Compares full names and official shortnames from teamInfo.
+function teamMatches(apiMatch, demoName, demoShort) {
+  const apiNames = [
+    ...(apiMatch.teams || []),
+    ...((apiMatch.teamInfo || []).flatMap((t) => [t.name, t.shortname])),
+  ].map(normTokens);
+  const want = [normTokens(demoName), normTokens(demoShort)].filter(Boolean);
+  return apiNames.some((n) => n && want.includes(n));
 }
 
 function parseOvers(o) {
@@ -57,20 +65,20 @@ function parseOvers(o) {
  * Returns a score patch or null when the API game doesn't correspond.
  */
 function buildPatch(apiMatch, demo) {
-  if (!apiMatch || !teamMatches(apiMatch.teams, demo.team1.name, demo.team1.shortName)) return null;
-  if (!teamMatches(apiMatch.teams, demo.team2.name, demo.team2.shortName)) return null;
+  if (!teamMatches(apiMatch, demo.team1.name, demo.team1.shortName)) return null;
+  if (!teamMatches(apiMatch, demo.team2.name, demo.team2.shortName)) return null;
 
   const patch = { matchId: demo.id, isVerifiedApi: true };
   const scores = Array.isArray(apiMatch.score) ? apiMatch.score : [];
 
-  const inningFor = (team) =>
-    scores.find((s) => {
-      const inning = normStr(s.inning || '');
-      return (
-        inning.includes(normStr(team.name)) ||
-        inning.includes(normStr(team.shortName))
-      );
+  const inningFor = (team) => {
+    const want = [normTokens(team.name), normTokens(team.shortName)].filter(Boolean);
+    return scores.find((s) => {
+      // Inning strings look like "Australia Inning 1" — token-subset match.
+      const parts = new Set(normTokens(s.inning || '').split('|'));
+      return want.some((w) => w.split('|').every((tok) => parts.has(tok)));
     });
+  };
 
   for (const key of ['team1', 'team2']) {
     const entry = inningFor(demo[key]);
@@ -134,11 +142,7 @@ app.get('/api/live-matches', async (_req, res) => {
     const games = await fetchUpstream();
     const patches = [];
     for (const demo of DEMO_MATCHES) {
-      const apiMatch = games.find(
-        (g) =>
-          teamMatches(g.teams, demo.team1.name, demo.team1.shortName) &&
-          teamMatches(g.teams, demo.team2.name, demo.team2.shortName)
-      );
+      const apiMatch = games.find((g) => teamMatches(g, demo.team1.name, demo.team1.shortName) && teamMatches(g, demo.team2.name, demo.team2.shortName));
       if (apiMatch) {
         const patch = buildPatch(apiMatch, demo);
         if (patch && (patch.team1 || patch.team2)) patches.push(patch);
