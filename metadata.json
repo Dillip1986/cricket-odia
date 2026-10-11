@@ -1,0 +1,6 @@
+{
+  "name": "Cricket Odia – କ୍ରିକେଟ୍ ଓଡ଼ିଆ",
+  "description": "ଭାରତ ତଥା ବିଶ୍ୱ କ୍ରିକେଟ୍‌ର ଲାଇଭ୍ ସ୍କୋର, ସ୍କୋରକାର୍ଡ, ବଲ୍-ବାଇ-ବଲ୍ ଧାରାବିବରଣୀ, ଖବର, ର‍୍ୟାଙ୍କିଙ୍ଗ୍ ଏବଂ ଖେଳସୂଚୀ ସମ୍ପୂର୍ଣ୍ଣ ଓଡ଼ିଆ ଭାଷାରେ | A modern, responsive cricket platform inspired by ESPNcricinfo in Odia.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: cricket-odia
+    runtime: node
+    plan: free
+    buildCommand: npm install --legacy-peer-deps --no-audit --no-fund && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: CRICAPI_KEY
+        sync: false
+      - key: LIVE_CACHE_TTL_MS
+        value: 60000
