@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useCricket } from '../context/CricketContext';
 import { MatchCard } from './MatchCard';
+import { NoMatchesToday } from './NoMatchesToday';
 import { NewsSection } from './NewsSection';
 import { formatScore, toOdiaDigits } from '../utils/odiaLocalization';
 
@@ -34,7 +35,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
     language,
     setSelectedMatch,
     useOdiaDigits,
-    isSimulatingLive,
+    liveSource,
     activeAlertBanner,
     dismissActiveAlert,
     triggerTestNotification,
@@ -127,10 +128,10 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
               <Sparkles className="w-3.5 h-3.5" />
               <span>{isOdia ? 'ଓଡ଼ିଶାର ପ୍ରଥମ ପୂର୍ଣ୍ଣାଙ୍ଗ କ୍ରିକେଟ୍ ପ୍ଲାଟଫର୍ମ' : "Odisha's Premier Cricket Hub"}</span>
             </span>
-            {isSimulatingLive && (
-              <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-bold flex items-center gap-1 text-[11px] border border-rose-500/30">
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
-                {isOdia ? 'ଲାଇଭ୍ ଧାରାବିବରଣୀ ସକ୍ରିୟ' : 'Live ball updates active'}
+            {liveSource === 'api' && liveMatches.length > 0 && (
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold flex items-center gap-1 text-[11px] border border-emerald-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {isOdia ? 'ଯାଞ୍ଚିତ ଲାଇଭ୍' : 'Verified live'}
               </span>
             )}
             {reminders.length > 0 && (
@@ -202,11 +203,15 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {liveMatches.map((match) => (
-            <MatchCard key={match.id} match={match} featured={true} />
-          ))}
-        </div>
+        {liveMatches.length === 0 ? (
+          <NoMatchesToday compact />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {liveMatches.map((match) => (
+              <MatchCard key={match.id} match={match} featured={true} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* 2-Column Split: Rankings Quick Widget + Upcoming Fixtures */}
@@ -235,6 +240,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
               {finishedMatches.slice(0, 2).map((m) => (
                 <MatchCard key={m.id} match={m} />
               ))}
+              {upcomingMatches.length === 0 && finishedMatches.length === 0 && (
+                <div className="sm:col-span-2">
+                  <NoMatchesToday compact />
+                </div>
+              )}
             </div>
           </div>
         </div>

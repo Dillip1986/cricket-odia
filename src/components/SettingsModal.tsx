@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Globe, Heart, Bell, Cpu, Moon, Sun, Check, ArrowLeft } from 'lucide-react';
+import { X, Globe, Heart, Moon, Sun, Check, ArrowLeft } from 'lucide-react';
 import { useCricket } from '../context/CricketContext';
 
 interface SettingsModalProps {
@@ -12,8 +12,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setLanguage,
     useOdiaDigits,
     setUseOdiaDigits,
-    isSimulatingLive,
-    setIsSimulatingLive,
     favouriteTeams,
     toggleFavouriteTeam,
     theme,
@@ -167,33 +165,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               >
                 {theme === 'dark' ? <Moon className="w-3 h-3 text-slate-900" /> : <Sun className="w-3 h-3 text-amber-500" />}
               </div>
-            </button>
-          </div>
-
-          {/* Live Simulator Toggle */}
-          <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4">
-            <div className="space-y-1">
-              <span className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-emerald-600" />
-                <span>{isOdia ? 'ସ୍ୱୟଂକ୍ରିୟ ଲାଇଭ୍ ମ୍ୟାଚ୍ ସିମୁଲେଟର୍' : 'Live Ball Simulator'}</span>
-              </span>
-              <p className="text-slate-500">
-                {isOdia
-                  ? 'ପ୍ରତି ୧୨ ସେକେଣ୍ଡରେ ଭାରତ ବନାମ ଅଷ୍ଟ୍ରେଲିଆ ମ୍ୟାଚ୍‌ରେ ନୂଆ ବଲ୍ ଏବଂ ରନ୍ ଯୋଗ କରନ୍ତୁ'
-                  : 'Simulate realistic live ball delivery updates automatically'}
-              </p>
-            </div>
-            <button
-              onClick={() => setIsSimulatingLive(!isSimulatingLive)}
-              className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors cursor-pointer shrink-0 ${
-                isSimulatingLive ? 'bg-emerald-600' : 'bg-slate-300'
-              }`}
-            >
-              <div
-                className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
-                  isSimulatingLive ? 'translate-x-6' : 'translate-x-0'
-                }`}
-              />
             </button>
           </div>
 

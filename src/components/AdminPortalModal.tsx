@@ -26,8 +26,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
     matches,
     addNewArticle,
     updateMatchScore,
-    isSimulatingLive,
-    setIsSimulatingLive,
   } = useCricket();
 
   const isOdia = language === 'odia';
@@ -520,11 +518,11 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
                     <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                       <div>
                         <p className="font-semibold text-slate-800">
-                          {isOdia ? 'ସ୍ୱୟଂକ୍ରିୟ ଲାଇଭ୍ ବଲ୍ ସିମୁଲେଟର୍ ସକ୍ରିୟ' : 'Live ball simulator initialized'}
+                          {isOdia ? 'ଯାଞ୍ଚିତ ଲାଇଭ୍ API ପୋଲିଂ ସକ୍ରିୟ' : 'Verified live API polling active'}
                         </p>
-                        <p className="text-[11px] text-slate-500">ମ୍ୟାଚ୍: ଭାରତ ବନାମ ଅଷ୍ଟ୍ରେଲିଆ (ବାରବାଟୀ)</p>
+                        <p className="text-[11px] text-slate-500">/api/live-matches · ୩୦ ସେକେଣ୍ଡ ବ୍ୟବଧାନ</p>
                       </div>
-                      <span className="text-[10px] text-slate-400 font-mono">୧୨ ସେକେଣ୍ଡ ବ୍ୟବଧାନ</span>
+                      <span className="text-[10px] text-slate-400 font-mono">୩୦ ସେକେଣ୍ଡ ବ୍ୟବଧାନ</span>
                     </div>
                   </div>
                 </div>

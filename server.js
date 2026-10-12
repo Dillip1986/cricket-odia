@@ -34,15 +34,172 @@ function normTokens(s) {
     .join('|');
 }
 
-// Strict team matching on whole tokens: "India" must NOT match "India A".
-// Compares full names and official shortnames from teamInfo.
-function teamMatches(apiMatch, demoName, demoShort) {
-  const apiNames = [
-    ...(apiMatch.teams || []),
-    ...((apiMatch.teamInfo || []).flatMap((t) => [t.name, t.shortname])),
-  ].map(normTokens);
-  const want = [normTokens(demoName), normTokens(demoShort)].filter(Boolean);
-  return apiNames.some((n) => n && want.includes(n));
+const FLAG_PALETTE = [
+  '#0033a0', '#ffcc00', '#007749', '#dc2626', '#0ea5e9',
+  '#16a34a', '#7c3aed', '#ea580c', '#0891b2', '#be123c',
+];
+
+function colorFor(name) {
+  const s = String(name || '?');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return FLAG_PALETTE[h % FLAG_PALETTE.length];
+}
+
+function shortFor(name, teamInfo) {
+  const info = (teamInfo || []).find(
+    (t) => normTokens(t.name).split('|').every((tok) => normTokens(name).split('|').includes(tok)) ||
+      normTokens(name).split('|').every((tok) => normTokens(t.name).split('|').includes(tok))
+  );
+  if (info && info.shortname) return String(info.shortname).toUpperCase().slice(0, 7);
+  const words = String(name || '?').split(/[^A-Za-z]+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return String(name || '?').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || '???';
+}
+
+function formatLabel(matchType, title, scores) {
+  const t = String(matchType || '').toLowerCase();
+  if (t === 'odi') return 'ODI';
+  if (t === 'test') return 'TEST';
+  if (t === 't20' || t === 't10') return 'T20';
+  // matchType missing on some games — infer from title, then from innings length.
+  const name = String(title || '').toLowerCase();
+  if (/test/.test(name)) return 'TEST';
+  if (/odi|one[\s-]?day|list[\s-]?a/.test(name)) return 'ODI';
+  if (/t20|t10/.test(name)) return 'T20';
+  let maxBalls = 0;
+  for (const s of scores || []) {
+    const m = /^\d+\.[0-5]$/.exec(String(s.o ?? ''));
+    if (m) {
+      const [o, b] = String(s.o).split('.').map(Number);
+      maxBalls = Math.max(maxBalls, o * 6 + b);
+    }
+  }
+  if (maxBalls > 300) return 'TEST';
+  if (maxBalls > 120) return 'ODI';
+  return 'T20';
+}
+
+function maxOvers(matchType) {
+  const t = String(matchType || '').toLowerCase();
+  if (t === 'odi') return 50;
+  if (t === 't10') return 10;
+  if (t === 'test') return null;
+  return 20;
+}
+
+function ballsFromOvers(overs) {
+  const m = /^\d+\.[0-5]$/.exec(String(overs ?? ''));
+  if (!m) return 0;
+  const [o, b] = String(overs).split('.').map(Number);
+  return o * 6 + b;
+}
+
+/**
+ * Normalize one CricAPI match into the app's Match shape.
+ * Missing Odia strings fall back to English (UI renders English text).
+ */
+function normalizeMatch(g) {
+  const teams = Array.isArray(g.teams) ? g.teams : [];
+  const teamInfo = Array.isArray(g.teamInfo) ? g.teamInfo : [];
+  const scores = Array.isArray(g.score) ? g.score : [];
+  const t1Name = teams[0] || 'Team 1';
+  const t2Name = teams[1] || 'Team 2';
+  const format = formatLabel(g.matchType, g.name, scores);
+  const status = g.matchEnded ? 'FINISHED' : g.matchStarted ? 'LIVE' : 'UPCOMING';
+  const isWomen = teams.some((t) => String(t).toLowerCase().includes('women'));
+
+  const entryFor = (name, short) => {
+    const want = [normTokens(name), normTokens(short)].filter(Boolean);
+    return scores.find((s) => {
+      const parts = new Set(normTokens(s.inning || '').split('|'));
+      return want.some((w) => w.split('|').every((tok) => parts.has(tok)));
+    });
+  };
+
+  const mkTeam = (name, isBatting, inningsLabel) => {
+    const short = shortFor(name, teamInfo);
+    const entry = entryFor(name, short);
+    const team = {
+      id: normTokens(name) || short.toLowerCase(),
+      name,
+      nameOdia: name,
+      shortName: short,
+      shortNameOdia: short,
+      flagColor: colorFor(name),
+      isBatting: status === 'LIVE' ? isBatting : false,
+      inningsDescription: inningsLabel,
+    };
+    if (entry && Number.isFinite(Number(entry.r))) {
+      team.score = Number(entry.r);
+      team.wickets = Number.isFinite(Number(entry.w)) ? Math.min(10, Number(entry.w)) : 0;
+      team.overs = parseOvers(entry.o);
+    }
+    return team;
+  };
+
+  // Batting side: only when the latest entry mentions exactly one team.
+  // Combined entries ("A,B Inning 2") are ambiguous — flag no one.
+  const lastEntry = scores.length > 0 ? scores[scores.length - 1] : null;
+  const lastTokens = lastEntry ? new Set(normTokens(lastEntry.inning || '').split('|')) : new Set();
+  const mentions = (name, short) =>
+    [normTokens(name), normTokens(short)]
+      .filter(Boolean)
+      .some((w) => w.split('|').every((tok) => lastTokens.has(tok)));
+  const t1Short = shortFor(t1Name, teamInfo);
+  const t2Short = shortFor(t2Name, teamInfo);
+  const lastMentionsT1 = mentions(t1Name, t1Short);
+  const lastMentionsT2 = mentions(t2Name, t2Short);
+
+  const team1 = mkTeam(t1Name, lastMentionsT1 && !lastMentionsT2, '1st Innings');
+  const team2 = mkTeam(t2Name, lastMentionsT2 && !lastMentionsT1, '2nd Innings');
+
+  const match = {
+    id: `cric-${g.id}`,
+    title: g.name || `${t1Name} vs ${t2Name}`,
+    titleOdia: g.name || `${t1Name} vs ${t2Name}`,
+    series: 'Live Cricket',
+    seriesOdia: 'ଲାଇଭ୍ କ୍ରିକେଟ୍',
+    format,
+    status,
+    statusTextOdia: (g.status || '').trim() || '—',
+    liveSummaryEn: (g.status || '').trim(),
+    category: isWomen ? 'WOMEN' : 'INTERNATIONAL',
+    team1,
+    team2,
+    venue: g.venue || '—',
+    venueOdia: g.venue || '—',
+    venueCityOdia: g.venue || '—',
+    dateStrOdia: g.date || g.dateTimeGMT || '',
+    dateStrEn: g.date || g.dateTimeGMT || '',
+    tossOdia: '',
+    commentary: [],
+    scorecards: [],
+    playingXI: { team1: [], team2: [] },
+    isVerifiedApi: true,
+  };
+
+  // Chase math for limited-overs games with both innings present.
+  const maxOv = maxOvers(g.matchType);
+  const batting = team2.score !== undefined && team2.isBatting ? team2 : team1.isBatting ? team1 : null;
+  if (batting && batting.score !== undefined && batting.overs) {
+    const faced = ballsFromOvers(batting.overs);
+    if (faced > 0) match.currentRunRate = (batting.score / (faced / 6)).toFixed(2);
+    const other = batting === team2 ? team1 : team2;
+    if (maxOv && other.score !== undefined) {
+      const target = other.score + 1;
+      match.target = target;
+      const need = Math.max(0, target - batting.score);
+      const left = Math.max(0, maxOv * 6 - faced);
+      if (left > 0) match.requiredRunRate = (need / (left / 6)).toFixed(2);
+      // Only replace the API status line for a genuine live chase.
+      if (status === 'LIVE' && need > 0 && left > 0) {
+        match.statusTextOdia = `${batting.name} need ${need} run(s) from ${left} ball(s)`;
+        match.liveSummaryEn = match.statusTextOdia;
+      }
+    }
+  }
+  return match;
 }
 
 function parseOvers(o) {
@@ -59,61 +216,6 @@ function parseOvers(o) {
   }
   return s;
 }
-
-/**
- * Map one CricAPI match onto one demo match.
- * Returns a score patch or null when the API game doesn't correspond.
- */
-function buildPatch(apiMatch, demo) {
-  if (!teamMatches(apiMatch, demo.team1.name, demo.team1.shortName)) return null;
-  if (!teamMatches(apiMatch, demo.team2.name, demo.team2.shortName)) return null;
-
-  const patch = { matchId: demo.id, isVerifiedApi: true };
-  const scores = Array.isArray(apiMatch.score) ? apiMatch.score : [];
-
-  const inningFor = (team) => {
-    const want = [normTokens(team.name), normTokens(team.shortName)].filter(Boolean);
-    return scores.find((s) => {
-      // Inning strings look like "Australia Inning 1" — token-subset match.
-      const parts = new Set(normTokens(s.inning || '').split('|'));
-      return want.some((w) => w.split('|').every((tok) => parts.has(tok)));
-    });
-  };
-
-  for (const key of ['team1', 'team2']) {
-    const entry = inningFor(demo[key]);
-    if (entry && Number.isFinite(Number(entry.r))) {
-      patch[key] = { ...demo[key] };
-      patch[key].score = Number(entry.r);
-      if (Number.isFinite(Number(entry.w))) {
-        patch[key].wickets = Math.min(10, Number(entry.w));
-      }
-      const overs = parseOvers(entry.o);
-      if (overs) patch[key].overs = overs;
-    }
-  }
-
-  if (apiMatch.matchEnded) {
-    patch.status = 'FINISHED';
-  } else if (apiMatch.matchStarted) {
-    patch.status = 'LIVE';
-  }
-  if (typeof apiMatch.status === 'string' && apiMatch.status.trim()) {
-    patch.statusTextOdia = apiMatch.status.trim();
-    patch.liveSummaryEn = apiMatch.status.trim();
-  }
-  return patch;
-}
-
-// Demo-match identity used for matching (mirrors src/services/cricketData.ts).
-const DEMO_MATCHES = [
-  { id: 'match-ind-aus-t20', team1: { name: 'Australia', shortName: 'AUS' }, team2: { name: 'India', shortName: 'IND' } },
-  { id: 'match-csk-mi-ipl', team1: { name: 'Chennai Super Kings', shortName: 'CSK' }, team2: { name: 'Mumbai Indians', shortName: 'MI' } },
-  { id: 'match-odisha-bengal', team1: { name: 'Bengal', shortName: 'BEN' }, team2: { name: 'Odisha', shortName: 'ODI' } },
-  { id: 'match-ind-eng-result', team1: { name: 'England', shortName: 'ENG' }, team2: { name: 'India', shortName: 'IND' } },
-  { id: 'match-ind-sa-upcoming', team1: { name: 'India', shortName: 'IND' }, team2: { name: 'South Africa', shortName: 'SA' } },
-  { id: 'match-ind-aus-women', team1: { name: 'India Women', shortName: 'IND-W' }, team2: { name: 'Australia Women', shortName: 'AUS-W' } },
-];
 
 async function fetchUpstream() {
   const url =
@@ -133,27 +235,22 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/live-matches', async (_req, res) => {
   if (!CRICAPI_KEY) {
-    return res.json({ ok: false, reason: 'no-key', patches: [], fetchedAt: Date.now() });
+    return res.json({ ok: false, reason: 'no-key', matches: [], fetchedAt: Date.now() });
   }
   try {
     if (Date.now() - cache.at < CACHE_TTL_MS && cache.payload) {
       return res.json(cache.payload);
     }
     const games = await fetchUpstream();
-    const patches = [];
-    for (const demo of DEMO_MATCHES) {
-      const apiMatch = games.find((g) => teamMatches(g, demo.team1.name, demo.team1.shortName) && teamMatches(g, demo.team2.name, demo.team2.shortName));
-      if (apiMatch) {
-        const patch = buildPatch(apiMatch, demo);
-        if (patch && (patch.team1 || patch.team2)) patches.push(patch);
-      }
-    }
-    const payload = { ok: true, patches, fetchedAt: Date.now(), count: games.length };
+    const matches = games
+      .filter((g) => g && Array.isArray(g.teams) && g.teams.length >= 2)
+      .map(normalizeMatch);
+    const payload = { ok: true, matches, fetchedAt: Date.now(), count: games.length };
     cache = { at: Date.now(), payload };
     res.json(payload);
   } catch (err) {
     console.error('[live-matches]', err.message);
-    res.status(502).json({ ok: false, reason: 'upstream-error', patches: [] });
+    res.status(502).json({ ok: false, reason: 'upstream-error', matches: [] });
   }
 });
 

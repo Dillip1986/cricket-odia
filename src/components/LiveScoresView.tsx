@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Radio, RefreshCw, Filter, Sparkles, ArrowLeft } from 'lucide-react';
+import { Radio, Filter, Sparkles, ArrowLeft } from 'lucide-react';
 import { useCricket } from '../context/CricketContext';
 import { MatchCard } from './MatchCard';
+import { NoMatchesToday } from './NoMatchesToday';
 import { MatchFormat, MatchCategory, MatchStatus } from '../types/cricket';
 import { toOdiaDigits } from '../utils/odiaLocalization';
 
@@ -10,7 +11,7 @@ interface LiveScoresViewProps {
 }
 
 export const LiveScoresView: React.FC<LiveScoresViewProps> = ({ setCurrentTab }) => {
-  const { matches, language, triggerNextBallSimulation, isSimulatingLive, useOdiaDigits } = useCricket();
+  const { matches, language, useOdiaDigits } = useCricket();
   const isOdia = language === 'odia';
 
   const [statusFilter, setStatusFilter] = useState<'ALL' | MatchStatus>('ALL');
@@ -48,21 +49,10 @@ export const LiveScoresView: React.FC<LiveScoresViewProps> = ({ setCurrentTab })
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {isOdia
-              ? 'ଆନ୍ତର୍ଜାତୀୟ, ଆଇପିଏଲ୍, ରଣଜୀ ଟ୍ରଫି ଏବଂ ମହିଳା କ୍ରିକେଟ୍‌ର ତାଜା ସ୍କୋରକାର୍ଡ'
-              : 'Real-time scores, innings progression, and match centres'}
+              ? 'ଯାଞ୍ଚିତ ଲାଇଭ୍ ଫିଡ୍‌ରୁ ତାଜା ସ୍କୋରକାର୍ଡ'
+              : 'Real-time scores from the verified live feed'}
           </p>
         </div>
-
-        {/* Live Simulator quick button */}
-        {isSimulatingLive && (
-          <button
-            onClick={() => triggerNextBallSimulation('match-ind-aus-t20')}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer shrink-0"
-          >
-            <RefreshCw className="w-3.5 h-3.5 animate-spin-hover" />
-            <span>{isOdia ? 'ନୂଆ ବଲ୍ ସିମୁଲେସନ୍ (Next Ball+)' : 'Trigger Next Ball'}</span>
-          </button>
-        )}
       </div>
 
       {/* Primary Filters */}
@@ -116,12 +106,23 @@ export const LiveScoresView: React.FC<LiveScoresViewProps> = ({ setCurrentTab })
         </div>
       </div>
 
-      {/* Matches Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredMatches.map((m) => (
-          <MatchCard key={m.id} match={m} featured={m.status === 'LIVE'} />
-        ))}
-      </div>
+      {/* Matches Grid (empty → "today there is no match") */}
+      {matches.length === 0 ? (
+        <NoMatchesToday />
+      ) : filteredMatches.length === 0 ? (
+        <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 space-y-3">
+          <Filter className="w-10 h-10 text-slate-400 mx-auto" />
+          <h3 className="text-base font-bold text-slate-700">
+            {isOdia ? 'ଏହି ଫିଲ୍ଟର୍‌ରେ କୌଣସି ମ୍ୟାଚ୍ ମିଳିଲା ନାହିଁ' : 'No matches found matching these filters'}
+          </h3>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {filteredMatches.map((m) => (
+            <MatchCard key={m.id} match={m} featured={m.status === 'LIVE'} />
+          ))}
+        </div>
+      )}
     </div>
   );
 };

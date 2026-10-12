@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   X,
   Radio,
-  RefreshCw,
   Share2,
   Calendar,
   MapPin,
@@ -29,9 +28,6 @@ export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClo
   const {
     useOdiaDigits,
     language,
-    triggerNextBallSimulation,
-    isSimulatingLive,
-    setIsSimulatingLive,
     hasReminder,
     toggleReminder,
   } = useCricket();
@@ -98,17 +94,6 @@ export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClo
                 >
                   <Bell className={`w-3.5 h-3.5 ${isReminded ? 'fill-white' : ''}`} />
                   <span>{isReminded ? (isOdia ? 'ସେଭ୍ ହେଲା' : 'Reminded') : (isOdia ? 'ମନେ ପକାନ୍ତୁ' : 'Remind me')}</span>
-                </button>
-              )}
-
-              {isLive && (
-                <button
-                  onClick={() => triggerNextBallSimulation(match.id)}
-                  className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors cursor-pointer"
-                  title="ନୂତନ ବଲ୍ ସିମୁଲେସନ୍ କରନ୍ତୁ"
-                >
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin-hover" />
-                  <span>{isOdia ? 'ପରବର୍ତ୍ତୀ ବଲ୍+' : 'Next Ball+'}</span>
                 </button>
               )}
 

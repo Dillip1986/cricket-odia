@@ -1,11 +1,11 @@
 import React from 'react';
-import { ChevronRight, Radio, RefreshCw } from 'lucide-react';
+import { ChevronRight, Radio } from 'lucide-react';
 import { useCricket } from '../context/CricketContext';
 import { Match } from '../types/cricket';
 import { formatScore, toOdiaDigits } from '../utils/odiaLocalization';
 
 export const LiveScoresTicker: React.FC = () => {
-  const { matches, setSelectedMatch, useOdiaDigits, language, triggerNextBallSimulation, isSimulatingLive, liveSource } = useCricket();
+  const { matches, setSelectedMatch, useOdiaDigits, language, liveSource } = useCricket();
 
   const isOdia = language === 'odia';
   const isApi = liveSource === 'api';
@@ -19,33 +19,24 @@ export const LiveScoresTicker: React.FC = () => {
             <Radio className="w-3 h-3 animate-pulse text-rose-500" />
             <span>{isOdia ? 'ମ୍ୟାଚ୍ ଟିକର୍' : 'MATCHES'}</span>
           </div>
-          {/* Data source badge: verified API vs demo simulation */}
-          <span
-            title={isApi
-              ? (isOdia ? 'ଯାଞ୍ଚିତ ଲାଇଭ୍ API ରୁ ସ୍କୋର' : 'Scores from verified live API')
-              : (isOdia ? 'ପ୍ରଦର୍ଶନ ସିମୁଲେସନ୍ (ନମୁନା ତଥ୍ୟ)' : 'Demo simulation data')}
-            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
-              isApi
-                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-            }`}
-          >
-            {isApi ? (isOdia ? 'ଲାଇଭ୍ API' : 'LIVE API') : (isOdia ? 'ଡେମୋ' : 'DEMO')}
-          </span>
-          {isSimulatingLive && (
-            <button
-              onClick={() => triggerNextBallSimulation('match-ind-aus-t20')}
-              className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer transition-colors"
-              title="ପରବର୍ତ୍ତୀ ବଲ୍ ସିମୁଲେସନ୍ କରନ୍ତୁ"
+          {/* Data source badge: verified live API */}
+          {isApi && (
+            <span
+              title={isOdia ? 'ଯାଞ୍ଚିତ ଲାଇଭ୍ API ରୁ ସ୍କୋର' : 'Scores from verified live API'}
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold border bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
             >
-              <RefreshCw className="w-2.5 h-2.5" />
-              <span className="hidden md:inline">{isOdia ? 'ଲାଇଭ୍ ବଲ୍+' : 'Next Ball+'}</span>
-            </button>
+              {isOdia ? 'ଲାଇଭ୍ API' : 'LIVE API'}
+            </span>
           )}
         </div>
 
-        {/* Horizontal scroll cards */}
+        {/* Horizontal scroll cards (live matches only; empty → "no match today") */}
         <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-0.5 flex-1">
+          {matches.length === 0 && (
+            <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap px-1">
+              {isOdia ? 'ଆଜି କୌଣସି ମ୍ୟାଚ୍ ନାହିଁ' : 'Today there is no match'}
+            </span>
+          )}
           {matches.map((m: Match) => {
             const isLive = m.status === 'LIVE';
             const isFinished = m.status === 'FINISHED';
@@ -108,13 +99,15 @@ export const LiveScoresTicker: React.FC = () => {
         </div>
 
         {/* View all prompt */}
-        <button
-          onClick={() => setSelectedMatch(matches[0])}
-          className="hidden xl:flex items-center text-xs text-slate-300 hover:text-emerald-400 whitespace-nowrap gap-1 cursor-pointer"
-        >
-          <span>{isOdia ? 'ସବୁ ଦେଖନ୍ତୁ' : 'View All'}</span>
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
+        {matches.length > 0 && (
+          <button
+            onClick={() => matches[0] && setSelectedMatch(matches[0])}
+            className="hidden xl:flex items-center text-xs text-slate-300 hover:text-emerald-400 whitespace-nowrap gap-1 cursor-pointer"
+          >
+            <span>{isOdia ? 'ସବୁ ଦେଖନ୍ତୁ' : 'View All'}</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );

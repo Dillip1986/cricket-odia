@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Calendar, Filter, Clock, MapPin, ChevronRight, ArrowLeft } from 'lucide-react';
 import { useCricket } from '../context/CricketContext';
 import { MatchCard } from './MatchCard';
+import { NoMatchesToday } from './NoMatchesToday';
 import { MatchFormat, MatchCategory } from '../types/cricket';
 
 interface FixturesViewProps {
@@ -133,8 +134,10 @@ export const FixturesView: React.FC<FixturesViewProps> = ({ setCurrentTab }) => 
         ))}
       </div>
 
-      {/* Grid of Matches */}
-      {filteredMatches.length === 0 ? (
+      {/* Grid of Matches (empty feed → "today there is no match") */}
+      {matches.length === 0 ? (
+        <NoMatchesToday />
+      ) : filteredMatches.length === 0 ? (
         <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 space-y-3">
           <Calendar className="w-10 h-10 text-slate-400 mx-auto" />
           <h3 className="text-base font-bold text-slate-700">

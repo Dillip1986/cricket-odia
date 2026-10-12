@@ -1,37 +1,27 @@
 /**
  * Verified live-scores client.
  *
- * Polls the same-origin backend (server.js /api/live-matches).
- * Resolves to null when the backend has no API key or is unreachable —
- * callers must fall back to simulation/demo mode.
+ * Polls the same-origin backend (server.js /api/live-matches) for the
+ * full list of current matches. Resolves to null when the backend has
+ * no API key or is unreachable — callers show the "no match" state.
  */
 import type { Match } from '../types/cricket';
-
-export interface ScorePatch {
-  matchId: string;
-  status?: Match['status'];
-  statusTextOdia?: string;
-  liveSummaryEn?: string;
-  isVerifiedApi?: boolean;
-  team1?: Partial<Match['team1']>;
-  team2?: Partial<Match['team2']>;
-}
 
 interface LiveResponse {
   ok: boolean;
   reason?: string;
-  patches?: ScorePatch[];
+  matches?: Match[];
   fetchedAt?: number;
 }
 
-export async function fetchLivePatches(): Promise<ScorePatch[] | null> {
+export async function fetchLiveMatches(): Promise<Match[] | null> {
   try {
     const res = await fetch('/api/live-matches', { cache: 'no-store' });
     if (!res.ok) return null;
     const json: LiveResponse = await res.json();
-    if (!json.ok || !Array.isArray(json.patches)) return null;
-    return json.patches;
+    if (!json.ok || !Array.isArray(json.matches)) return null;
+    return json.matches;
   } catch {
-    return null; // static host / offline — stay in demo mode
+    return null; // static host / offline — show "no match today"
   }
 }

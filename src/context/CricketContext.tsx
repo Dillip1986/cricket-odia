@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { Match, NewsArticle, PointsTableRow, PlayerProfile, CommentaryDelivery, MatchReminder } from '../types/cricket';
-import { INITIAL_MATCHES, INITIAL_NEWS, INITIAL_STANDINGS, INITIAL_PLAYERS, INITIAL_RANKINGS } from '../services/cricketData';
-import { fetchLivePatches, ScorePatch } from '../services/liveApi';
+import { Match, NewsArticle, PointsTableRow, PlayerProfile, MatchReminder } from '../types/cricket';
+import { INITIAL_NEWS, INITIAL_STANDINGS, INITIAL_PLAYERS, INITIAL_RANKINGS } from '../services/cricketData';
+import { fetchLiveMatches } from '../services/liveApi';
 
 interface CricketContextType {
   matches: Match[];
@@ -31,23 +31,21 @@ interface CricketContextType {
   dismissActiveAlert: () => void;
   triggerTestNotification: () => void;
   toastMessage: string | null;
-  isSimulatingLive: boolean;
-  setIsSimulatingLive: (sim: boolean) => void;
   isAdmin: boolean;
   setIsAdmin: (isAdmin: boolean) => void;
   addNewArticle: (article: Omit<NewsArticle, 'id' | 'viewsCount'>) => void;
   updateMatchScore: (matchId: string, updates: Partial<Match>) => void;
-  triggerNextBallSimulation: (matchId: string) => void;
-  resetDemoData: () => void;
-  /** 'api' when the last poll applied verified scores, else 'sim' (demo engine). */
-  liveSource: 'api' | 'sim';
+  /** 'api' once the verified feed has loaded, else 'none' (show "no match today"). */
+  liveSource: 'api' | 'none';
+  /** True while the first live-feed fetch is in flight. */
+  isLoadingMatches: boolean;
 }
 
 const CricketContext = createContext<CricketContextType | undefined>(undefined);
 
 // Storage schema version — bump when persisted shapes change so stale
 // data from older builds can never put the app in a broken state.
-const STORAGE_VERSION = 'v2';
+const STORAGE_VERSION = 'v3';
 const STORAGE_KEYS = [
   'cricket_odia_matches',
   'cricket_odia_news',
@@ -56,7 +54,6 @@ const STORAGE_KEYS = [
   'cricket_odia_reminders',
   'cricket_odia_language',
   'cricket_odia_digits',
-  'cricket_odia_simulating',
   'cricket_odia_theme',
 ];
 
@@ -122,122 +119,14 @@ function getInitialTheme(): 'light' | 'dark' {
   return 'light';
 }
 
-// --- Pure simulation helper (testable, no React side-effects inside) ---
-interface SimOutcome {
-  runs: number;
-  event: CommentaryDelivery['event'];
-  textOdia: string;
-  textEn: string;
-  isWicket: boolean;
-}
-
-const SIM_OUTCOMES: SimOutcome[] = [
-  { runs: 4, event: 'FOUR', textOdia: 'ଚୌକା! ଫିଲ୍ଡରଙ୍କୁ ଚକମା ଦେଇ ବଲ୍ ସୀମାରେଖା ଅତିକ୍ରମ କଲା। ଚମତ୍କାର ଟାଇମିଂ!', textEn: 'FOUR! Beautiful boundary driven through extra cover.', isWicket: false },
-  { runs: 1, event: 'ONE', textOdia: 'ଗୋଟିଏ ରନ୍। ସିଙ୍ଗଲ୍ ନେଇ ଷ୍ଟ୍ରାଇକ୍ ପରିବର୍ତ୍ତନ କଲେ।', textEn: 'Single taken towards midwicket.', isWicket: false },
-  { runs: 6, event: 'SIX', textOdia: 'ଛକା! ଆକାଶଛୁଆଁ ଛକା! ବଲ୍ ସିଧା ଷ୍ଟାଣ୍ଡରେ ଯାଇ ପଡ଼ିଲା!', textEn: 'SIX! Dispatched deep into the tier!', isWicket: false },
-  { runs: 2, event: 'TWO', textOdia: 'ଦୁଇ ରନ୍। ୱିକେଟ୍ ମଧ୍ୟରେ ତୀବ୍ର ଦୌଡ଼ ସହ ଦୁଇଟି ରନ୍ ସଫଳତାର ସହ ପୂରା।', textEn: 'Quick double taken, great running.', isWicket: false },
-  { runs: 0, event: 'DOT', textOdia: 'ଡଟ୍ ବଲ୍। ଡିଫେନ୍ସିଭ୍ ସଟ୍, କୌଣସି ରନ୍ ହେଲା ନାହିଁ।', textEn: 'Dot ball, solid block on the front foot.', isWicket: false },
-  { runs: 0, event: 'WICKET', textOdia: 'ୱିକେଟ୍! ବଡ଼ ସଟ୍ ଖେଳିବାକୁ ଯାଇ ବ୍ୟାଟର ଆଉଟ୍! ଦର୍ଶକ ସ୍ତବ୍ଧ।', textEn: 'WICKET! Big shot attempted, batter departs!', isWicket: true },
-];
-
-function parseOvers(overs?: string): { over: number; ball: number; totalBalls: number } {
-  if (!overs || !/^\d+\.[0-5]$/.test(overs.trim())) return { over: 0, ball: 0, totalBalls: 0 };
-  const [o, b] = overs.split('.').map(Number);
-  return { over: o, ball: b, totalBalls: o * 6 + b };
-}
-
-function formatOvers(totalBalls: number): string {
-  return `${Math.floor(totalBalls / 6)}.${totalBalls % 6}`;
-}
-
-function maxBallsForFormat(format: Match['format']): number | null {
-  if (format === 'T20') return 120;
-  if (format === 'ODI') return 300;
-  return null; // TEST: no limit
-}
-
-export function simulateNextBall(match: Match): Match | null {
-  if (match.status !== 'LIVE') return null;
-  const battingKey = match.team2.isBatting ? 'team2' : match.team1.isBatting ? 'team1' : 'team2';
-  const batting = match[battingKey];
-  if (batting.score === undefined || batting.wickets === undefined) return null;
-
-  const { totalBalls } = parseOvers(batting.overs ?? '0.0');
-  const nextTotalBalls = totalBalls + 1;
-  const newOverStr = formatOvers(nextTotalBalls);
-
-  const chosen = SIM_OUTCOMES[Math.floor(Math.random() * SIM_OUTCOMES.length)];
-  const newScore = batting.score + chosen.runs;
-  const newWickets = Math.min(10, batting.wickets + (chosen.isWicket ? 1 : 0));
-
-  const newCommentary: CommentaryDelivery = {
-    id: `sim-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
-    over: newOverStr,
-    runs: chosen.runs,
-    event: chosen.event,
-    commentaryOdia: `${chosen.textOdia} (${newOverStr} ଓଭର)`,
-    commentaryEn: `${chosen.textEn} (Over ${newOverStr})`,
-    batsmanNameOdia: match.currentBatsmen?.[0]?.nameOdia ?? 'ବ୍ୟାଟର',
-    bowlerNameOdia: match.currentBowlers?.[0]?.nameOdia ?? 'ବୋଲର',
-    batsmanNameEn: match.currentBatsmen?.[0]?.name ?? 'Batter',
-    bowlerNameEn: match.currentBowlers?.[0]?.name ?? 'Bowler',
-    timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-    isKeyMoment: chosen.runs >= 4 || chosen.isWicket,
-  };
-
-  // Run rates from actual balls faced (fix: previously static)
-  const oversBowled = nextTotalBalls / 6;
-  const crr = oversBowled > 0 ? (newScore / oversBowled).toFixed(2) : '0.00';
-  let rrr: string | undefined;
-  let finished = newWickets >= 10;
-  let statusText = match.statusTextOdia;
-
-  const maxBalls = maxBallsForFormat(match.format);
-  if (match.target && match.target > 0 && maxBalls) {
-    const runsNeeded = Math.max(0, match.target - newScore);
-    const ballsRemaining = Math.max(0, maxBalls - nextTotalBalls);
-    rrr = ballsRemaining > 0 ? (runsNeeded / (ballsRemaining / 6)).toFixed(2) : '0.00';
-    if (runsNeeded <= 0) {
-      finished = true;
-      statusText = `ଭାରତ ${10 - newWickets} ୱିକେଟ୍‌ରେ ରୋମାଞ୍ଚକର ବିଜୟ ହାସଲ କଲା!`;
-    } else if (ballsRemaining <= 0) {
-      finished = true;
-      statusText = 'ନିର୍ଦ୍ଧାରିତ ଓଭର ଶେଷ — ମ୍ୟାଚ୍ ସମାପ୍ତ';
-    } else {
-      statusText = `ଜିତିବା ପାଇଁ ${ballsRemaining} ବଲ୍‌ରେ ${runsNeeded} ରନ୍ ଆବଶ୍ୟକ`;
-    }
-  } else if (maxBalls && nextTotalBalls >= maxBalls) {
-    finished = true;
-    statusText = 'ନିର୍ଦ୍ଧାରିତ ଓଭର ଶେଷ — ମ୍ୟାଚ୍ ସମାପ୍ତ';
-  } else if (match.format === 'TEST') {
-    statusText = match.statusTextOdia; // day/session text managed manually
-  }
-
-  return {
-    ...match,
-    status: finished ? 'FINISHED' : 'LIVE',
-    statusTextOdia: statusText,
-    currentRunRate: crr,
-    requiredRunRate: rrr ?? match.requiredRunRate,
-    [battingKey]: {
-      ...batting,
-      score: newScore,
-      wickets: newWickets,
-      overs: newOverStr,
-    },
-    recentBalls: [
-      chosen.isWicket ? 'W' : String(chosen.runs),
-      ...(match.recentBalls || []),
-    ].slice(0, 6),
-    commentary: [newCommentary, ...match.commentary].slice(0, 50),
-  } as Match;
-}
 
 export const CricketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // One-time migration: drop state persisted by older builds before reading it.
   ensureStorageVersion();
 
-  const [matches, setMatches] = useState<Match[]>(() => safeLoad('cricket_odia_matches', INITIAL_MATCHES, isMatchArray));
+  // Live-only: matches come exclusively from the verified API feed.
+  // Empty list means "today there is no match" — never demo data.
+  const [matches, setMatches] = useState<Match[]>(() => safeLoad('cricket_odia_matches', [], isMatchArray));
   const [news, setNews] = useState<NewsArticle[]>(() => safeLoad('cricket_odia_news', INITIAL_NEWS, isNewsArray));
   const [standings] = useState<PointsTableRow[]>(INITIAL_STANDINGS);
   const [players] = useState<PlayerProfile[]>(INITIAL_PLAYERS);
@@ -259,23 +148,9 @@ export const CricketProvider: React.FC<{ children: React.ReactNode }> = ({ child
     safeLoad('cricket_odia_bookmarks', [], isStringArray)
   );
 
-  const [reminders, setReminders] = useState<MatchReminder[]>(() => {
-    const saved = safeLoad<MatchReminder[] | null>('cricket_odia_reminders', null, isReminderArray);
-    if (saved) return saved;
-    return [
-      {
-        id: 'rem-ind-aus-women',
-        matchId: 'match-ind-aus-women',
-        matchTitleOdia: 'ଭାରତ ମହିଳା ବନାମ ଅଷ୍ଟ୍ରେଲିଆ ମହିଳା, ସେମିଫାଇନାଲ୍',
-        matchTitleEn: 'India Women vs Australia Women, Semifinal',
-        format: 'T20',
-        dateStrOdia: 'ଆସନ୍ତାକାଲି ସନ୍ଧ୍ୟା ୭:୦୦ (Lord\'s, London)',
-        venueOdia: 'ଲର୍ଡ୍ସ କ୍ରିକେଟ୍ ଗ୍ରାଉଣ୍ଡ',
-        addedAt: Date.now(),
-        isTriggered: true,
-      },
-    ];
-  });
+  const [reminders, setReminders] = useState<MatchReminder[]>(() =>
+    safeLoad('cricket_odia_reminders', [], isReminderArray)
+  );
 
   // Fix: don't read `reminders` state during init (stale closure) — read storage directly
   const [activeAlertBanner, setActiveAlertBanner] = useState<MatchReminder | null>(() => {
@@ -296,63 +171,30 @@ export const CricketProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
 
-  const [isSimulatingLive, setIsSimulatingLive] = useState<boolean>(() =>
-    safeLoad('cricket_odia_simulating', true)
-  );
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
-  // Verified-API state: 'api' once a poll applies real scores.
-  const [liveSource, setLiveSource] = useState<'api' | 'sim'>('sim');
-  // Matches currently driven by the API are excluded from the sim engine.
-  const apiDrivenRef = useRef<Set<string>>(new Set());
+  // Verified live feed state.
+  const [liveSource, setLiveSource] = useState<'api' | 'none'>('none');
+  const [isLoadingMatches, setIsLoadingMatches] = useState<boolean>(true);
 
-  const applyScorePatch = useCallback((patch: ScorePatch) => {
-    setMatches((prev) =>
-      prev.map((m) => {
-        if (m.id !== patch.matchId) return m;
-        const updated: Match = {
-          ...m,
-          ...(patch.status ? { status: patch.status } : {}),
-          ...(patch.statusTextOdia ? { statusTextOdia: patch.statusTextOdia } : {}),
-          ...(patch.liveSummaryEn ? { liveSummaryEn: patch.liveSummaryEn } : {}),
-          isVerifiedApi: true,
-          team1: patch.team1 ? { ...m.team1, ...patch.team1 } : m.team1,
-          team2: patch.team2 ? { ...m.team2, ...patch.team2 } : m.team2,
-        };
-        const batting = updated.team2.isBatting || !updated.team1.isBatting ? updated.team2 : updated.team1;
-        const note: CommentaryDelivery = {
-          id: `api-${Date.now()}-${m.id}`,
-          over: batting.overs ?? '',
-          runs: 0,
-          event: 'ONE',
-          commentaryOdia: `✅ ଯାଞ୍ଚିତ ଲାଇଭ୍ ଅପଡେଟ୍: ${batting.score ?? ''}/${batting.wickets ?? ''} (${batting.overs ?? ''})`,
-          commentaryEn: `Verified live update: ${batting.score ?? ''}/${batting.wickets ?? ''} (${batting.overs ?? ''}) — ${patch.liveSummaryEn ?? ''}`,
-          batsmanNameOdia: '',
-          bowlerNameOdia: '',
-          batsmanNameEn: '',
-          bowlerNameEn: '',
-          timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-        };
-        updated.commentary = [note, ...m.commentary].slice(0, 50);
-        return updated;
-      })
-    );
-  }, []);
-
-  const pollLiveScores = useCallback(async () => {
-    const patches = await fetchLivePatches();
-    if (!patches || patches.length === 0) return;
-    apiDrivenRef.current = new Set(patches.map((p) => p.matchId));
-    for (const patch of patches) applyScorePatch(patch);
+  const pollLiveMatches = useCallback(async () => {
+    const live = await fetchLiveMatches();
+    if (live === null) {
+      // Backend unreachable / no key: keep previous list (may be empty).
+      setIsLoadingMatches(false);
+      return;
+    }
+    setMatches(live);
     setLiveSource('api');
-  }, [applyScorePatch]);
+    setIsLoadingMatches(false);
+  }, []);
 
   // Poll the verified API every 30s (server caches upstream for 60s).
   useEffect(() => {
-    pollLiveScores();
-    const interval = setInterval(pollLiveScores, 30_000);
+    pollLiveMatches();
+    const interval = setInterval(pollLiveMatches, 30_000);
     return () => clearInterval(interval);
-  }, [pollLiveScores]);
+  }, [pollLiveMatches]);
 
   // Keep open modal in sync with the matches list (single source of truth).
   // This avoids divergent random outcomes from updating both states independently.
@@ -386,9 +228,6 @@ export const CricketProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     safeSave('cricket_odia_digits', useOdiaDigits);
   }, [useOdiaDigits]);
-  useEffect(() => {
-    safeSave('cricket_odia_simulating', isSimulatingLive);
-  }, [isSimulatingLive]);
 
   // Fix: theme was stored but never applied — apply + persist
   useEffect(() => {
@@ -499,51 +338,6 @@ export const CricketProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setSelectedMatch((prevSel) => (prevSel?.id === matchId ? { ...prevSel, ...updates } : prevSel));
   }, []);
 
-  const triggerNextBallSimulation = useCallback((matchId: string) => {
-    // Skip matches driven by the verified API — never overwrite real scores.
-    if (apiDrivenRef.current.has(matchId)) return;
-    // Only the matches list is updated here; the open modal syncs via the effect above.
-    setMatches((prevMatches) =>
-      prevMatches.map((match) => {
-        if (match.id !== matchId || match.status !== 'LIVE') return match;
-        return simulateNextBall(match) ?? match;
-      })
-    );
-  }, []);
-
-  const resetDemoData = useCallback(() => {
-    apiDrivenRef.current = new Set();
-    setLiveSource('sim');
-    setMatches(INITIAL_MATCHES);
-    setNews(INITIAL_NEWS);
-    setSelectedMatch(null);
-    setSelectedArticle(null);
-  }, []);
-
-  // Fix: stable interval — no reset on selectedMatch change; simulate every LIVE match
-  useEffect(() => {
-    if (!isSimulatingLive) return;
-    const interval = setInterval(() => {
-      // Only update the list; the modal syncs via effect (same object, no divergent random ball).
-      setMatches((prevMatches) => {
-        const liveIds = prevMatches.filter((m) => m.status === 'LIVE').map((m) => m.id);
-        if (liveIds.length === 0) return prevMatches;
-        let changed = false;
-        const next = prevMatches.map((match) => {
-          if (match.status !== 'LIVE' || apiDrivenRef.current.has(match.id)) return match;
-          const updated = simulateNextBall(match);
-          if (updated) {
-            changed = true;
-            return updated;
-          }
-          return match;
-        });
-        return changed ? next : prevMatches;
-      });
-    }, 12000);
-    return () => clearInterval(interval);
-  }, [isSimulatingLive]);
-
   return (
     <CricketContext.Provider
       value={{
@@ -574,15 +368,12 @@ export const CricketProvider: React.FC<{ children: React.ReactNode }> = ({ child
         dismissActiveAlert,
         triggerTestNotification,
         toastMessage,
-        isSimulatingLive,
-        setIsSimulatingLive,
         isAdmin,
         setIsAdmin,
         addNewArticle,
         updateMatchScore,
-        triggerNextBallSimulation,
-        resetDemoData,
         liveSource,
+        isLoadingMatches,
       }}
     >
       {children}
