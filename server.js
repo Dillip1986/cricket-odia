@@ -157,11 +157,22 @@ app.get('/api/live-matches', async (_req, res) => {
   }
 });
 
-// --- Static frontend + SPA fallback ---
+// --- Static frontend + SPA fallback (Express 4 & 5 safe) ---
 const distDir = path.join(__dirname, 'dist');
+const indexFile = path.join(distDir, 'index.html');
 app.use(express.static(distDir));
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(distDir, 'index.html'));
+app.use((req, res) => {
+  res.sendFile(indexFile, (err) => {
+    if (err) {
+      res
+        .status(404)
+        .type('text')
+        .send(
+          'Cricket Odia frontend is not built (dist/ is missing). ' +
+            'Check the Render build logs for `npm run build` errors.'
+        );
+    }
+  });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
