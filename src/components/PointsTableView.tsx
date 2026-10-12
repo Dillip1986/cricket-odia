@@ -40,7 +40,7 @@ export const PointsTableView: React.FC<PointsTableViewProps> = ({ setCurrentTab 
         </div>
 
         {/* Tournament Switcher */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl overflow-x-auto no-scrollbar max-w-full">
           <button
             onClick={() => setTournament('wtc')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
@@ -83,8 +83,8 @@ export const PointsTableView: React.FC<PointsTableViewProps> = ({ setCurrentTab 
           </span>
         </div>
 
-        <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full text-xs text-left">
+        <div className="overflow-x-auto custom-scrollbar -mx-0">
+          <table className="w-full min-w-[600px] text-xs text-left">
             <thead className="bg-slate-100/70 text-slate-600 font-semibold border-b border-slate-200">
               <tr>
                 <th className="p-3.5 w-12 text-center">#</th>

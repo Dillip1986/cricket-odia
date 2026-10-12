@@ -17,14 +17,17 @@ import {
 } from 'lucide-react';
 import { Match, CommentaryDelivery } from '../types/cricket';
 import { useCricket } from '../context/CricketContext';
+import { useStrings } from '../i18n/strings';
 import { formatScore, toOdiaDigits, ODIA_DICTIONARY } from '../utils/odiaLocalization';
 
-interface MatchCentreModalProps {
+interface MatchCentreProps {
   match: Match;
   onClose: () => void;
+  /** 'modal' renders in a fixed overlay, 'page' as a full routed page. */
+  variant?: 'modal' | 'page';
 }
 
-export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClose }) => {
+export const MatchCentreContent: React.FC<MatchCentreProps> = ({ match, onClose, variant = 'modal' }) => {
   const {
     useOdiaDigits,
     language,
@@ -33,6 +36,7 @@ export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClo
   } = useCricket();
 
   const isOdia = language === 'odia';
+  const t = useStrings();
   const isLive = match.status === 'LIVE';
   const isUpcoming = match.status === 'UPCOMING';
   const isReminded = hasReminder(match.id);
@@ -42,9 +46,10 @@ export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClo
   const [commentaryFilter, setCommentaryFilter] = useState<'ALL' | 'BOUNDARIES' | 'WICKETS'>('ALL');
   const [copySuccess, setCopySuccess] = useState(false);
 
-  // Handle share
+  // Handle share — copies a shareable deep link to this match page
   const handleShare = () => {
-    const text = `${match.titleOdia} - ${match.statusTextOdia} | Cricket Odia (କ୍ରିକେଟ୍ ଓଡ଼ିଆ)`;
+    const url = `${window.location.origin}${window.location.pathname}#/match/${encodeURIComponent(match.id)}`;
+    const text = `${match.titleOdia} - ${match.statusTextOdia} | Cricket Odia (କ୍ରିକେଟ୍ ଓଡ଼ିଆ) ${url}`;
     navigator.clipboard.writeText(text);
     setCopySuccess(true);
     setTimeout(() => setCopySuccess(false), 2000);
@@ -56,22 +61,38 @@ export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClo
     return true;
   });
 
+  const isPage = variant === 'page';
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-auto max-h-[92vh]">
+    <div
+      className={
+        isPage
+          ? 'w-full'
+          : 'fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200'
+      }
+      {...(!isPage ? { role: 'dialog', 'aria-modal': 'true', 'aria-label': match.title } : {})}
+    >
+      <div
+        className={
+          isPage
+            ? 'bg-white dark:bg-[#0f2444] rounded-2xl w-full max-w-5xl mx-auto shadow-xl border border-slate-200 dark:border-slate-700/60 overflow-hidden flex flex-col'
+            : 'bg-white rounded-2xl w-full max-w-4xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-auto max-h-[92vh]'
+        }
+      >
         {/* Match Header Bar */}
         <div className="bg-[#091a32] text-white p-4 sm:p-6 border-b border-slate-800 shrink-0">
           <div className="flex items-center justify-between gap-4 mb-3">
             <div className="flex items-center gap-2 text-xs text-slate-300 min-w-0">
-              {/* CLEAR PROMINENT GO BACK BUTTON */}
-              <button
-                onClick={onClose}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold border border-slate-700 transition-colors cursor-pointer shrink-0 shadow-xs"
-                title="ପଛକୁ ଫେରନ୍ତୁ (Go Back)"
-              >
-                <ArrowLeft className="w-4 h-4 text-emerald-400" />
-                <span>{isOdia ? '← ପଛକୁ (Back)' : '← Back'}</span>
-              </button>
+              {/* Back — modal only (page variant has its own back button above) */}
+              {!isPage && (
+                <button
+                  onClick={onClose}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold border border-slate-700 transition-colors cursor-pointer shrink-0 shadow-xs min-h-[40px]"
+                  title="ପଛକୁ ଫେରନ୍ତୁ (Go Back)"
+                >
+                  <ArrowLeft className="w-4 h-4 text-emerald-400" />
+                  <span>{isOdia ? '← ପଛକୁ (Back)' : '← Back'}</span>
+                </button>
+              )}
 
               <span className="font-bold uppercase px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
                 {match.format}
@@ -108,12 +129,17 @@ export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClo
 
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-rose-900/50 hover:text-rose-300 transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-rose-900/50 hover:text-rose-300 transition-colors cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
                 title="ବନ୍ଦ କରନ୍ତୁ"
                 aria-label="Close"
               >
                 <X className="w-5 h-5" />
               </button>
+              {isPage && (
+                <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold">
+                  {isOdia ? 'ଲାଇଭ୍ ପୃଷ୍ଠା' : 'Match page'}
+                </span>
+              )}
             </div>
           </div>
 
@@ -212,60 +238,64 @@ export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClo
         </div>
 
         {/* Tab Navigation Controls */}
-        <div className="bg-slate-100 border-b border-slate-200 px-4 sm:px-6 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
+        <div
+          role="tablist"
+          aria-label={isOdia ? 'ମ୍ୟାଚ୍ ବିଭାଗ' : 'Match sections'}
+          className="bg-slate-100 border-b border-slate-200 px-4 sm:px-6 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0"
+        >
           <button
             onClick={() => setActiveTab('summary')}
-            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer min-h-[44px] ${
               activeTab === 'summary'
                 ? 'text-emerald-700 border-emerald-600'
                 : 'text-slate-600 border-transparent hover:text-slate-900'
             }`}
           >
-            {isOdia ? 'ସଂକ୍ଷିପ୍ତ ସାରାଂଶ' : 'Summary'}
+            {t.tabSummary}
           </button>
           <button
             onClick={() => setActiveTab('commentary')}
-            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer min-h-[44px] ${
               activeTab === 'commentary'
                 ? 'text-emerald-700 border-emerald-600'
                 : 'text-slate-600 border-transparent hover:text-slate-900'
             }`}
           >
-            {isOdia ? 'ଧାରାବିବରଣୀ (ବଲ୍-ବାଇ-ବଲ୍)' : 'Ball-by-Ball'}
+            {t.tabCommentary}
           </button>
           <button
             onClick={() => setActiveTab('scorecard')}
-            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer min-h-[44px] ${
               activeTab === 'scorecard'
                 ? 'text-emerald-700 border-emerald-600'
                 : 'text-slate-600 border-transparent hover:text-slate-900'
             }`}
           >
-            {isOdia ? 'ସମ୍ପୂର୍ଣ୍ଣ ସ୍କୋରକାର୍ଡ' : 'Full Scorecard'}
+            {t.tabScorecard}
           </button>
           <button
             onClick={() => setActiveTab('playingXI')}
-            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer min-h-[44px] ${
               activeTab === 'playingXI'
                 ? 'text-emerald-700 border-emerald-600'
                 : 'text-slate-600 border-transparent hover:text-slate-900'
             }`}
           >
-            {isOdia ? 'ଖେଳାଳି ଏକାଦଶ' : 'Playing XI'}
+            {t.tabPlayingXI}
           </button>
           <button
             onClick={() => setActiveTab('matchInfo')}
-            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer min-h-[44px] ${
               activeTab === 'matchInfo'
                 ? 'text-emerald-700 border-emerald-600'
                 : 'text-slate-600 border-transparent hover:text-slate-900'
             }`}
           >
-            {isOdia ? 'ମ୍ୟାଚ୍ ସୂଚନା' : 'Match Info'}
+            {t.tabInfo}
           </button>
           <button
             onClick={() => setActiveTab('stats')}
-            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+            className={`py-3 px-3.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer min-h-[44px] ${
               activeTab === 'stats'
                 ? 'text-emerald-700 border-emerald-600'
                 : 'text-slate-600 border-transparent hover:text-slate-900'
@@ -875,6 +905,54 @@ export const MatchCentreModal: React.FC<MatchCentreModalProps> = ({ match, onClo
           )}
         </div>
       </div>
+    </div>
+  );
+};
+
+/** Back navigation for the match page (history-aware). */
+function goBackFromMatch() {
+  if (window.history.length > 1) {
+    window.history.back();
+  } else {
+    window.location.hash = '#/live';
+  }
+}
+
+/** Dedicated responsive match-details page at #/match/:id. */
+export const MatchCentrePage: React.FC<{ matchId: string; match: Match | null }> = ({ match }) => {
+  const { language } = useCricket();
+  const isOdia = language === 'odia';
+
+  if (!match) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <button
+          onClick={goBackFromMatch}
+          className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl bg-white dark:bg-[#0f2444] border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-emerald-500 mb-4 cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4 text-emerald-500" />
+          {isOdia ? 'ସ୍କୋରକୁ ଫେରନ୍ତୁ' : 'Back to scores'}
+        </button>
+        <div className="card p-10 text-center space-y-3">
+          <h1 className="text-lg font-bold">{isOdia ? 'ମ୍ୟାଚ୍ ଉପଲବ୍ଧ ନାହିଁ' : 'Match unavailable'}</h1>
+          <p className="text-xs text-slate-500">
+            {isOdia ? 'ଏହି ମ୍ୟାଚ୍ ଲାଇଭ୍ ଫିଡ୍‌ରେ ଆଉ ନାହିଁ।' : 'This match is no longer on the live feed.'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <button
+        onClick={goBackFromMatch}
+        className="inline-flex items-center gap-2 min-h-[44px] px-4 rounded-xl bg-white dark:bg-[#0f2444] border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-emerald-500 cursor-pointer"
+      >
+        <ArrowLeft className="w-4 h-4 text-emerald-500" />
+        {isOdia ? '← ପଛକୁ (Back)' : '← Back'}
+      </button>
+      <MatchCentreContent match={match} onClose={goBackFromMatch} variant="page" />
     </div>
   );
 };

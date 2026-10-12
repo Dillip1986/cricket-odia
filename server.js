@@ -169,7 +169,7 @@ function normalizeMatch(g) {
     team2,
     venue: g.venue || '—',
     venueOdia: g.venue || '—',
-    venueCityOdia: g.venue || '—',
+    venueCityOdia: String(g.venue || '').split(',').pop()?.trim() || g.venue || '—',
     dateStrOdia: g.date || g.dateTimeGMT || '',
     dateStrEn: g.date || g.dateTimeGMT || '',
     tossOdia: '',

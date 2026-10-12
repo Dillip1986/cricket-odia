@@ -18,6 +18,8 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { useCricket } from '../context/CricketContext';
+import { useStrings } from '../i18n/strings';
+import { openMatch } from '../router';
 import { MatchCard } from './MatchCard';
 import { NoMatchesToday } from './NoMatchesToday';
 import { NewsSection } from './NewsSection';
@@ -33,14 +35,13 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
     matches,
     rankings,
     language,
-    setSelectedMatch,
     useOdiaDigits,
-    liveSource,
     activeAlertBanner,
     dismissActiveAlert,
     triggerTestNotification,
     reminders,
   } = useCricket();
+  const t = useStrings();
   const isOdia = language === 'odia';
 
   const liveMatches = matches.filter((m) => m.status === 'LIVE');
@@ -91,7 +92,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
               <button
                 onClick={() => {
                   const target = matches.find((m) => m.id === activeAlertBanner.matchId);
-                  if (target) setSelectedMatch(target);
+                  if (target) openMatch(target.id);
                 }}
                 className="px-4 py-2 bg-slate-950 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-md transition-all hover:scale-102 flex items-center gap-1.5 cursor-pointer"
               >
@@ -120,24 +121,26 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
         </div>
       )}
 
-      {/* Editorial Hero Banner */}
-      <div className="relative rounded-3xl overflow-hidden bg-gradient-to-r from-[#091a32] via-[#0d2a4d] to-[#064e3b] text-white p-6 sm:p-10 shadow-xl border border-slate-800">
-        <div className="relative z-10 max-w-3xl space-y-4">
+      {/* Compact hero — navy to green, immediate access to live scores */}
+      <section className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-[#071426] text-white border border-slate-800/60 shadow-lg">
+        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-[#071426] via-[#0a2a3f] to-[#00573f]" />
+        <div aria-hidden="true" className="absolute -right-12 -top-20 hidden sm:block w-72 h-72 rounded-full bg-[#00B887]/15 blur-2xl" />
+        <div className="relative px-5 py-6 sm:p-8 flex flex-col gap-3 sm:gap-4 max-w-3xl">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30 flex items-center gap-1.5">
+            <span className="px-3 py-1 rounded-full bg-[#00B887]/15 text-[#00e6a8] font-semibold border border-[#00B887]/30 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>{isOdia ? 'ଓଡ଼ିଶାର ପ୍ରଥମ ପୂର୍ଣ୍ଣାଙ୍ଗ କ୍ରିକେଟ୍ ପ୍ଲାଟଫର୍ମ' : "Odisha's Premier Cricket Hub"}</span>
+              <span>{t.heroBadge}</span>
             </span>
-            {liveSource === 'api' && liveMatches.length > 0 && (
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold flex items-center gap-1 text-[11px] border border-emerald-500/30">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                {isOdia ? 'ଯାଞ୍ଚିତ ଲାଇଭ୍' : 'Verified live'}
+            {liveMatches.length > 0 && (
+              <span className="px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-300 font-bold flex items-center gap-1.5 text-[11px] border border-rose-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                {useOdiaDigits ? toOdiaDigits(liveMatches.length) : liveMatches.length} {t.liveCountSuffix}
               </span>
             )}
             {reminders.length > 0 && (
               <button
                 onClick={openReminders}
-                className="px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 font-semibold flex items-center gap-1 text-[11px] border border-amber-400/30 hover:bg-amber-400/30 transition-colors cursor-pointer"
+                className="px-2.5 py-1 rounded-full bg-amber-400/15 text-amber-300 font-semibold flex items-center gap-1 text-[11px] border border-amber-400/30 hover:bg-amber-400/25 transition-colors cursor-pointer min-h-[32px]"
               >
                 <Bell className="w-3 h-3" />
                 <span>
@@ -147,39 +150,35 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
             )}
           </div>
 
-          <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-white leading-tight">
-            {isOdia
-              ? 'କ୍ରିକେଟ୍ ଓଡ଼ିଆ – ପ୍ରତିଟି ବଲ୍, ପ୍ରତିଟି ରନ୍ ଏବଂ ପ୍ରତିଟି ରୋମାଞ୍ଚ!'
-              : 'Cricket Odia – Every Ball, Every Run, Every Thrill!'}
+          <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight text-white leading-snug">
+            {t.heroTitle}
           </h1>
 
-          <p className="text-sm sm:text-base text-slate-200 leading-relaxed max-w-2xl">
-            {isOdia
-              ? 'କଟକ ବାରବାଟୀରୁ ମେଲବୋର୍ଣ୍ଣ, ଆଇପିଏଲ୍‌ରୁ ରଣଜୀ ଟ୍ରଫି ପର୍ଯ୍ୟନ୍ତ – ସମସ୍ତ ମ୍ୟାଚ୍‌ର ଲାଇଭ୍ ସ୍କୋର, ସମ୍ପୂର୍ଣ୍ଣ ସ୍କୋରକାର୍ଡ, ଧାରାବିବରଣୀ ଓ ବିଶ୍ଳେଷଣ ସମ୍ପୂର୍ଣ୍ଣ ଓଡ଼ିଆ ଭାଷାରେ।'
-              : 'From Cuttack Barabati to Melbourne, IPL to Ranji Trophy – live scores, commentary, and scorecards in the Odia language.'}
+          <p className="text-[13px] sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
+            {t.heroDesc}
           </p>
 
-          <div className="flex flex-wrap items-center gap-3 pt-2">
+          <div className="flex flex-wrap items-center gap-2.5 pt-1">
             <button
               onClick={() => {
-                if (liveMatches[0]) setSelectedMatch(liveMatches[0]);
+                if (liveMatches[0]) openMatch(liveMatches[0].id);
                 else setCurrentTab('live');
               }}
-              className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs sm:text-sm shadow-md transition-all hover:scale-102 cursor-pointer flex items-center gap-2"
+              className="btn-primary"
             >
-              <Radio className="w-4 h-4 animate-pulse text-slate-950" />
-              <span>{isOdia ? 'ଲାଇଭ୍ ମ୍ୟାଚ୍ ସେଣ୍ଟର (କଟକ ଟି୨୦)' : 'Go to Live Match'}</span>
+              <Radio className="w-4 h-4 animate-pulse" />
+              <span>{t.heroLiveBtn}</span>
             </button>
 
             <button
               onClick={() => setCurrentTab('fixtures')}
-              className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs sm:text-sm border border-white/20 transition-colors cursor-pointer"
+              className="btn-ghost-light"
             >
-              {isOdia ? 'ସମ୍ପୂର୍ଣ୍ଣ ଖେଳସୂଚୀ ଦେଖନ୍ତୁ' : 'View Fixtures'}
+              {t.heroUpcomingBtn}
             </button>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* Featured Live Matches Section */}
       <section className="space-y-4">
@@ -187,18 +186,18 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-100 text-rose-800 text-xs font-bold">
               <Radio className="w-3.5 h-3.5 animate-pulse text-rose-600" />
-              <span>{isOdia ? 'ଲାଇଭ୍ ମ୍ୟାଚ୍' : 'Live Matches'}</span>
+              <span>{t.cardLiveMatches}</span>
             </div>
             <span className="text-xs text-slate-500 hidden sm:inline">
-              ({useOdiaDigits ? toOdiaDigits(liveMatches.length) : liveMatches.length} {isOdia ? 'ଟି ଚାଲୁଅଛି' : 'in progress'})
+              ({useOdiaDigits ? toOdiaDigits(liveMatches.length) : liveMatches.length} {t.liveCountSuffix})
             </span>
           </div>
 
           <button
             onClick={() => setCurrentTab('live')}
-            className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
+            className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer min-h-[44px]"
           >
-            <span>{isOdia ? 'ସମସ୍ତ ସ୍କୋର' : 'All Scores'}</span>
+            <span>{t.viewAll}</span>
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
@@ -222,7 +221,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ setCurrentTab, ope
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-emerald-600" />
-                <span>{isOdia ? 'ଆଗାମୀ ଓ ସଦ୍ୟତମ ମ୍ୟାଚ୍‌ସ' : 'Upcoming & Recent Results'}</span>
+                <span>{t.cardUpcomingRecent}</span>
               </h3>
               <button
                 onClick={() => setCurrentTab('fixtures')}

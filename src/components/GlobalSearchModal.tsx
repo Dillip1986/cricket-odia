@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, X, Radio, Newspaper, User, ChevronRight, ArrowLeft } from 'lucide-react';
 import { useCricket } from '../context/CricketContext';
+import { openMatch } from '../router';
 
 interface GlobalSearchModalProps {
   onClose: () => void;
 }
 
 export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ onClose }) => {
-  const { matches, news, players, setSelectedMatch, setSelectedArticle, language } = useCricket();
+  const { matches, news, players, setSelectedArticle, language } = useCricket();
   const isOdia = language === 'odia';
 
   const [query, setQuery] = useState('');
@@ -142,7 +143,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ onClose })
                       <div
                         key={m.id}
                         onClick={() => {
-                          setSelectedMatch(m);
+                          openMatch(m.id);
                           onClose();
                         }}
                         className="p-3 rounded-xl bg-slate-50 hover:bg-emerald-50/70 border border-slate-200/80 hover:border-emerald-200 transition-colors cursor-pointer flex items-center justify-between"

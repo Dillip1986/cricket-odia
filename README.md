@@ -8,7 +8,7 @@ Prerequisites: Node.js 20+.
 
 ```bash
 npm install --legacy-peer-deps
-npm run dev        # http://localhost:3000 (demo/simulation mode)
+npm run dev        # vite dev server (uses same-origin /api when proxied)
 ```
 
 With verified live scores (free key from https://www.cricapi.com):
@@ -19,10 +19,10 @@ npm run build
 npm run start      # serves dist/ + /api/live-matches on PORT (default 3000)
 ```
 
-Without `CRICAPI_KEY` the app runs in demo mode: scores simulate every
-12s and the ticker shows a `DEMO` badge. With a key and matching live
-games upstream, patched matches show a `LIVE API` badge and the
-simulator never overwrites real scores.
+The app is live-only: matches come exclusively from the verified
+CricAPI feed. When the feed has no games, every view shows
+"ଆଜି କୌଣସି ମ୍ୟାଚ୍ ନାହିଁ / Today there is no match" — there is no
+demo or simulated data anywhere.
 
 ## Deploy (recommended: Render)
 
@@ -33,12 +33,26 @@ simulator never overwrites real scores.
 4. Deploy. Every `git push` redeploys.
 
 Static-only hosts (Vercel / Netlify / Cloudflare Pages / GitHub Pages)
-also work: build command `npm run build`, output `dist/`. The app then
-runs in demo mode (no `/api/*` backend).
+also work: build command `npm run build`, output `dist/`. Without the
+`/api/*` backend the app shows the "no match today" state.
 
 ## API
 
 - `GET /api/health` → `{ ok, liveApi, time }`
-- `GET /api/live-matches` → `{ ok, patches, fetchedAt }`
-  - `patches[]`: `{ matchId, status, statusTextOdia, liveSummaryEn, team1, team2 }`
+- `GET /api/live-matches` → `{ ok, matches, fetchedAt, count }`
+  - `matches[]`: full `Match` objects normalized from CricAPI
+    (scores, overs, CRR/RRR, chase equations, venues, status).
   - `{ ok: false, reason: 'no-key' }` when `CRICAPI_KEY` is unset.
+
+## Frontend
+
+- Hash routes (no router dependency): `#/` home, `#/live`,
+  `#/fixtures`, `#/standings`, `#/news`, `#/rankings`, `#/teams`,
+  `#/match/:id` (dedicated match page — shareable deep links).
+- Centralized Odia-first strings in `src/i18n/strings.ts`
+  (`useStrings()`); Odia is default, English toggle in header.
+- Design tokens (navy `#071426`, green `#00B887`) and reusable
+  primitives (`.card`, `.btn-primary`, `.pill`, `.skeleton`, `.score`)
+  in `src/index.css`.
+- Live data polls every 30s and swaps state in place — no full-page
+  reloads, scroll position preserved.

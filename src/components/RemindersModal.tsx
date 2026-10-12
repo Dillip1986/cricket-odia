@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Bell, Trash2, ChevronRight, Clock, MapPin, ArrowLeft, Send } from 'lucide-react';
 import { useCricket } from '../context/CricketContext';
+import { openMatch } from '../router';
 
 interface RemindersModalProps {
   onClose: () => void;
@@ -11,7 +12,6 @@ export const RemindersModal: React.FC<RemindersModalProps> = ({ onClose }) => {
     reminders,
     dismissReminder,
     matches,
-    setSelectedMatch,
     triggerTestNotification,
     language,
   } = useCricket();
@@ -137,7 +137,7 @@ export const RemindersModal: React.FC<RemindersModalProps> = ({ onClose }) => {
                       {targetMatch && (
                         <button
                           onClick={() => {
-                            setSelectedMatch(targetMatch);
+                            openMatch(targetMatch.id);
                             onClose();
                           }}
                           className="text-[11px] font-semibold text-slate-800 hover:text-emerald-700 flex items-center gap-0.5 cursor-pointer"
