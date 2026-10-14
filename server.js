@@ -1,11 +1,10 @@
 /**
  * Cricket Odia — production server.
  *
- * Serves the Vite build (dist/) and proxies live scores from CricAPI,
- * keeping the API key server-side. Without CRICAPI_KEY the API routes
- * return { ok: false } and the frontend stays in demo/simulation mode.
+ * Serves the Vite build (dist/) and merges live scores from ESPNcricinfo
+ * (keyless) and Cricbuzz via RapidAPI, keeping API keys server-side.
  *
- *   PORT=3000 CRICAPI_KEY=xxx node server.js
+ *   PORT=3000 CRICBUZZ_KEY=xxx node server.js
  */
 import express from 'express';
 import path from 'path';
@@ -16,15 +15,12 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
-const CRICAPI_KEY = process.env.CRICAPI_KEY || '';
-// Free keys allow ~100 upstream hits/day: 10-min live cache + 90-min
-// fixtures cache keeps a full day of browsing inside budget.
+// Live-payload cache (served to all visitors; upstream fetched rarely).
 const LIVE_TTL_MS = Number(process.env.LIVE_CACHE_TTL_MS || 10 * 60_000);
-const FIXTURES_TTL_MS = Number(process.env.FIXTURES_CACHE_TTL_MS || 90 * 60_000);
 const ERROR_COOLDOWN_MS = Number(process.env.UPSTREAM_COOLDOWN_MS || 10 * 60_000);
 
-// Second source: Cricbuzz via RapidAPI (covers internationals, IPL,
-// Ranji Trophy, women's games missing from CricAPI). Optional.
+// Second source: Cricbuzz via RapidAPI (extra internationals, leagues,
+// women's games). Optional.
 const CRICBUZZ_KEY = process.env.CRICBUZZ_KEY || '';
 const CRICBUZZ_HOST = process.env.CRICBUZZ_HOST || 'cricbuzz-cricket.p.rapidapi.com';
 const CBZ_LIVE_TTL_MS = Number(process.env.CRICBUZZ_LIVE_TTL_MS || 15 * 60_000);
@@ -35,7 +31,6 @@ app.use(express.json());
 
 // --- Caches ---
 let liveCache = { at: 0, payload: null };
-let fixturesCache = { at: 0, games: [] };
 let cooldownUntil = 0;
 
 function normTokens(s) {
@@ -110,96 +105,6 @@ function ballsFromOvers(overs) {  const m = /^\d+\.[0-5]$/.exec(String(overs ?? 
   if (!m) return 0;
   const [o, b] = String(overs).split('.').map(Number);
   return o * 6 + b;
-}
-
-/**
- * Normalize one CricAPI match into the app's Match shape.
- * Missing Odia strings fall back to English (UI renders English text).
- */
-function normalizeMatch(g) {
-  const teams = Array.isArray(g.teams) ? g.teams : [];
-  const teamInfo = Array.isArray(g.teamInfo) ? g.teamInfo : [];
-  const scores = Array.isArray(g.score) ? g.score : [];
-  const t1Name = teams[0] || 'Team 1';
-  const t2Name = teams[1] || 'Team 2';
-  const format = formatLabel(g.matchType, g.name, scores);
-  let status = g.matchEnded ? 'FINISHED' : g.matchStarted ? 'LIVE' : 'UPCOMING';
-  if (isResultText(g.status)) status = 'FINISHED'; // flags lag; decided game ≠ live
-  const isWomen = teams.some((t) => String(t).toLowerCase().includes('women'));
-
-  const entryFor = (name, short) => {
-    const want = [normTokens(name), normTokens(short)].filter(Boolean);
-    return scores.find((s) => {
-      const parts = new Set(normTokens(s.inning || '').split('|'));
-      return want.some((w) => w.split('|').every((tok) => parts.has(tok)));
-    });
-  };
-
-  const mkTeam = (name, isBatting, inningsLabel) => {
-    const short = shortFor(name, teamInfo);
-    const entry = entryFor(name, short);
-    const team = {
-      id: normTokens(name) || short.toLowerCase(),
-      name,
-      nameOdia: name,
-      shortName: short,
-      shortNameOdia: short,
-      flagColor: colorFor(name),
-      isBatting: status === 'LIVE' ? isBatting : false,
-      inningsDescription: inningsLabel,
-    };
-    if (entry && Number.isFinite(Number(entry.r))) {
-      team.score = Number(entry.r);
-      team.wickets = Number.isFinite(Number(entry.w)) ? Math.min(10, Number(entry.w)) : 0;
-      team.overs = parseOvers(entry.o);
-    }
-    return team;
-  };
-
-  // Batting side: only when the latest entry mentions exactly one team.
-  // Combined entries ("A,B Inning 2") are ambiguous — flag no one.
-  const lastEntry = scores.length > 0 ? scores[scores.length - 1] : null;
-  const lastTokens = lastEntry ? new Set(normTokens(lastEntry.inning || '').split('|')) : new Set();
-  const mentions = (name, short) =>
-    [normTokens(name), normTokens(short)]
-      .filter(Boolean)
-      .some((w) => w.split('|').every((tok) => lastTokens.has(tok)));
-  const t1Short = shortFor(t1Name, teamInfo);
-  const t2Short = shortFor(t2Name, teamInfo);
-  const lastMentionsT1 = mentions(t1Name, t1Short);
-  const lastMentionsT2 = mentions(t2Name, t2Short);
-
-  const team1 = mkTeam(t1Name, lastMentionsT1 && !lastMentionsT2, '1st Innings');
-  const team2 = mkTeam(t2Name, lastMentionsT2 && !lastMentionsT1, '2nd Innings');
-
-  const match = {
-    id: `cric-${g.id}`,
-    title: g.name || `${t1Name} vs ${t2Name}`,
-    titleOdia: g.name || `${t1Name} vs ${t2Name}`,
-    series: 'Live Cricket',
-    seriesOdia: 'ଲାଇଭ୍ କ୍ରିକେଟ୍',
-    format,
-    status,
-    statusTextOdia: (g.status || '').trim() || '—',
-    liveSummaryEn: (g.status || '').trim(),
-    category: isWomen ? 'WOMEN' : 'INTERNATIONAL',
-    team1,
-    team2,
-    venue: g.venue || '—',
-    venueOdia: g.venue || '—',
-    venueCityOdia: String(g.venue || '').split(',').pop()?.trim() || g.venue || '—',
-    dateStrOdia: g.date || g.dateTimeGMT || '',
-    dateStrEn: g.date || g.dateTimeGMT || '',
-    tossOdia: '',
-    commentary: [],
-    scorecards: [],
-    playingXI: { team1: [], team2: [] },
-    isVerifiedApi: true,
-  };
-
-  // Chase math for limited-overs games with both innings present.
-  applyChaseMath(match, team1, team2, maxOvers(g.matchType), status);
-  return match;
 }
 
 /**
@@ -728,37 +633,9 @@ function sameFixture(aTeams, bTeams) {
   return norm(aTeams) === norm(bTeams);
 }
 
-async function cricGet(endpoint) {  const url = `https://api.cricapi.com/v1/${endpoint}?apikey=${encodeURIComponent(CRICAPI_KEY)}&offset=0`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
-  if (!res.ok) {
-    const err = new Error(`CricAPI ${endpoint} HTTP ${res.status}`);
-    err.code = res.status;
-    throw err;
-  }
-  const json = await res.json();
-  if (json.status !== 'success' || !Array.isArray(json.data)) {
-    const err = new Error(`CricAPI ${endpoint} error: ${json.message || json.status || 'unknown'}`);
-    err.code = 'bad-payload';
-    throw err;
-  }
-  if (json.info && typeof json.info.hitsToday !== 'undefined') {
-    console.log(`[quota] ${endpoint}: ${json.info.hitsToday}/${json.info.hitsLimit ?? '?'} hits used today`);
-  }
-  return json.data;
-}
-
-async function fetchLiveGames() {
-  return cricGet('currentMatches');
-}
-
-async function fetchFixtureGames() {
-  return cricGet('matches');
-}
-
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    liveApi: Boolean(CRICAPI_KEY),
     secondSource: CRICBUZZ_KEY ? 'cricbuzz' : null,
     cricbuzz: cbzSourceStatus,
     espn: espnSourceStatus,
@@ -795,8 +672,8 @@ app.post('/api/admin/verify', (req, res) => {
 const STATUS_RANK = { LIVE: 0, UPCOMING: 1, FINISHED: 2 };
 
 app.get('/api/live-matches', async (_req, res) => {
-  // ESPN needs no key; each keyed source self-guards. All missing → no-key.
-  if (!CRICAPI_KEY && !CRICBUZZ_KEY && !ESPN_ENABLED) {
+  // ESPN needs no key; each keyed source self-guards.
+  if (!CRICBUZZ_KEY && !ESPN_ENABLED) {
     return res.json({ ok: false, reason: 'no-key', matches: [], fetchedAt: Date.now() });
   }
   try {
@@ -821,45 +698,6 @@ app.get('/api/live-matches', async (_req, res) => {
       matches.push(...espn);
     } catch (e) {
       console.error('[espn-merge]', e.message);
-    }
-
-    // Source A: CricAPI (when keyed; fixtures ESPN already has are skipped).
-    // One source failing must never discard the others.
-    if (CRICAPI_KEY) {
-      try {
-        // 1) Live + recent games with scores (primary, every cycle).
-        const games = await fetchLiveGames();
-        count += games.length;
-        const seen = new Set(games.map((g) => g && g.id).filter(Boolean));
-        for (const g of games) {
-          if (!g || !Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
-          const nm = normalizeMatch(g);
-          if (hasFixture(matches, nm.team1.name, nm.team2.name)) continue; // ESPN wins
-          matches.push(nm);
-        }
-
-        // 2) Upcoming fixtures (cheap: refreshed rarely, merged by id).
-        if (Date.now() - fixturesCache.at > FIXTURES_TTL_MS) {
-          try {
-            fixturesCache = { at: Date.now(), games: await fetchFixtureGames() };
-          } catch (e) {
-            console.error('[fixtures]', e.message);
-          }
-        }
-        for (const g of fixturesCache.games) {
-          if (!g || !g.id || seen.has(g.id)) continue;
-          if (g.matchStarted || g.matchEnded) continue;
-          if (!Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
-          seen.add(g.id);
-          const nm = normalizeMatch(g);
-          if (hasFixture(matches, nm.team1.name, nm.team2.name)) continue; // ESPN wins
-          matches.push(nm);
-        }
-      } catch (e) {
-        console.error('[cricapi-merge]', e.message);
-        const quotaHit = /credit|quota|limit|auth|key|failure/i.test(e.message);
-        cooldownUntil = Date.now() + (quotaHit ? 60 * 60_000 : ERROR_COOLDOWN_MS);
-      }
     }
 
     // Source B: Cricbuzz via RapidAPI — fills gaps (keeps ESPN/CricAPI versions on collision).
@@ -1134,7 +972,7 @@ app.use((req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(
-    `Cricket Odia live on :${PORT} (CricAPI ${CRICAPI_KEY ? 'ENABLED' : 'disabled — set CRICAPI_KEY'}, ` +
+    `Cricket Odia live on :${PORT} (ESPN ${ESPN_ENABLED ? 'ENABLED' : 'disabled'}, ` +
       `Cricbuzz ${CRICBUZZ_KEY ? 'ENABLED' : 'disabled — set CRICBUZZ_KEY'})`
   );
 });

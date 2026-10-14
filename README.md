@@ -11,16 +11,22 @@ npm install --legacy-peer-deps
 npm run dev        # vite dev server (uses same-origin /api when proxied)
 ```
 
-With verified live scores (free key from https://www.cricapi.com):
+Live scores come from two sources (no key needed for the first):
+
+- **ESPNcricinfo live page** — same match list as cricinfo.com
+  (internationals, Ranji Trophy, women's games), with team logos,
+  ball-by-ball commentary and full scorecards per match.
+- **Cricbuzz via RapidAPI** (optional) — extra coverage. Free key at
+  https://rapidapi.com/cricketapilive/api/cricbuzz-cricket
 
 ```bash
-cp .env.example .env   # then set CRICAPI_KEY
+cp .env.example .env   # then set CRICBUZZ_KEY (optional)
 npm run build
 npm run start      # serves dist/ + /api/live-matches on PORT (default 3000)
 ```
 
 The app is live-only: matches come exclusively from the verified
-CricAPI feed. When the feed has no games, every view shows
+ESPNcricinfo + Cricbuzz feeds. When the feeds have no games, every view shows
 "ଆଜି କୌଣସି ମ୍ୟାଚ୍ ନାହିଁ / Today there is no match" — there is no
 demo or simulated data anywhere.
 
@@ -29,7 +35,8 @@ demo or simulated data anywhere.
 1. Push this folder to GitHub.
 2. On https://render.com → New → Web Service → select the repo
    (`render.yaml` fills build/start commands automatically).
-3. Add env var `CRICAPI_KEY` (optional — demo mode works without it).
+3. Add env var `CRICBUZZ_KEY` (optional) and `ADMIN_PIN` (optional —
+   without it the admin console stays disabled).
 4. Deploy. Every `git push` redeploys.
 
 Static-only hosts (Vercel / Netlify / Cloudflare Pages / GitHub Pages)
@@ -38,17 +45,17 @@ also work: build command `npm run build`, output `dist/`. Without the
 
 ## API
 
-- `GET /api/health` → `{ ok, liveApi, secondSource, cricbuzz, espn, time }`
+- `GET /api/health` → `{ ok, secondSource, cricbuzz, espn, adminEnabled, time }`
 - `GET /api/live-matches` → `{ ok, matches, fetchedAt, count }`
 - `GET /api/match-centre?matchId=espn-<id>` → `{ ok, commentary[], scorecards[], currentBatsmen[], currentBowlers[] }`
   - Ball-by-ball commentary + full scorecard scraped from the match's
     Cricinfo page (2-min cache). Works without any API key.
-  - `matches[]`: full `Match` objects, merged from three sources —
+  - `matches[]`: full `Match` objects, merged from two sources —
     **ESPNcricinfo live page** (same list as cricinfo.com: internationals,
     IPL, Ranji Trophy, women; includes team logos; needs no key),
-    CricAPI (needs `CRICAPI_KEY`), and Cricbuzz via RapidAPI
-    (needs `CRICBUZZ_KEY`). ESPN wins fixtures present on multiple
-    sources; duplicates are dropped; list is sorted LIVE → upcoming → results.
+    and Cricbuzz via RapidAPI (needs `CRICBUZZ_KEY`). ESPN wins
+    fixtures present on both; duplicates are dropped; list is sorted
+    LIVE → upcoming → results.
   - `{ ok: false, reason: 'no-key' }` only when every source is disabled.
 
 ## Frontend

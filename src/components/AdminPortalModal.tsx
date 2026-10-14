@@ -36,7 +36,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
   const [verifying, setVerifying] = useState(false);
   const [adminEnabled, setAdminEnabled] = useState<boolean | null>(null);
   const [feedStatus, setFeedStatus] = useState<{
-    liveApi?: boolean;
     secondSource?: string | null;
     cricbuzz?: { state?: string; message?: string };
     espn?: { state?: string; message?: string };
@@ -531,9 +530,9 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
 
                   <div className="space-y-2">
                     <FeedRow
-                      label={isOdia ? 'CricAPI (ମୁଖ୍ୟ ଫିଡ୍)' : 'CricAPI (primary feed)'}
-                      active={feedStatus?.liveApi === true}
-                      detail={feedStatus?.liveApi ? (isOdia ? 'ସକ୍ରିୟ' : 'Active') : (isOdia ? 'ଚାବି ନାହିଁ' : 'No key set')}
+                      label={isOdia ? 'ESPNcricinfo ପୃଷ୍ଠା (ମୁଖ୍ୟ ଫିଡ୍, ଚାବି ଆବଶ୍ୟକ ନାହିଁ)' : 'ESPNcricinfo page (primary feed, no key needed)'}
+                      active={feedStatus?.espn?.state === 'ok'}
+                      detail={feedStatus?.espn?.message || feedStatus?.espn?.state || '…'}
                     />
                     <FeedRow
                       label={isOdia ? 'Cricbuzz (ଦ୍ୱିତୀୟ ଉତ୍ସ)' : 'Cricbuzz (second source)'}
@@ -543,11 +542,6 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
                           ? `${isOdia ? 'ସକ୍ରିୟ' : 'Active'} · ${feedStatus?.cricbuzz?.state ?? ''}`
                           : (isOdia ? 'ଚାବି ନାହିଁ' : 'No key set')
                       }
-                    />
-                    <FeedRow
-                      label={isOdia ? 'ESPNcricinfo ପୃଷ୍ଠା (ଚାବି ଆବଶ୍ୟକ ନାହିଁ)' : 'ESPNcricinfo page (no key needed)'}
-                      active={feedStatus?.espn?.state === 'ok'}
-                      detail={feedStatus?.espn?.message || feedStatus?.espn?.state || '…'}
                     />
                   </div>
                 </div>
