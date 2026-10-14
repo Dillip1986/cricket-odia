@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   ShieldCheck,
@@ -29,9 +29,18 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
   } = useCricket();
 
   const isOdia = language === 'odia';
+  const SESSION_KEY = 'co_admin_unlocked';
 
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [adminEnabled, setAdminEnabled] = useState<boolean | null>(null);
+  const [feedStatus, setFeedStatus] = useState<{
+    liveApi?: boolean;
+    secondSource?: string | null;
+    cricbuzz?: { state?: string; message?: string };
+    espn?: { state?: string; message?: string };
+  } | null>(null);
   const [activeAdminTab, setActiveAdminTab] = useState<'publish' | 'scores' | 'api' | 'audit'>('publish');
 
   // New Article Form state
@@ -51,20 +60,73 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
   const [editStatusText, setEditStatusText] = useState('');
   const [scoreSuccess, setScoreSuccess] = useState(false);
 
-  // API Config state
-  const [apiEndpoint, setApiEndpoint] = useState('https://api.cricapi.com/v1/currentMatches');
-  const [apiKey, setApiKey] = useState('');
-  const [cacheTTL, setCacheTTL] = useState('30');
-  const [apiSaveSuccess, setApiSaveSuccess] = useState(false);
+  // Server-side status: is the console enabled, and which feeds are live?
+  // Runs once per modal open. No secrets are ever requested or stored here.
+  useEffect(() => {
+    let cancelled = false;
+    try {
+      if (sessionStorage.getItem(SESSION_KEY) === '1') setIsAdmin(true);
+    } catch {
+      /* private mode */
+    }
+    fetch('/api/admin/status', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { enabled: false }))
+      .then((j) => {
+        if (!cancelled) setAdminEnabled(Boolean(j.enabled));
+      })
+      .catch(() => {
+        if (!cancelled) setAdminEnabled(false);
+      });
+    fetch('/api/health', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!cancelled && j) setFeedStatus(j);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [setIsAdmin]);
 
-  // Simple PIN verification (Default PIN: "odia123")
-  const handleLogin = (e: React.FormEvent) => {
+  // PIN is verified by the server (ADMIN_PIN env). It is never bundled
+  // into the app and never displayed.
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pin === 'odia123' || pin === 'admin') {
-      setIsAdmin(true);
-      setPinError('');
-    } else {
-      setPinError(isOdia ? 'ଅବୈଧ ପିନ୍ କୋଡ୍! ଦୟାକରି "odia123" ବ୍ୟବହାର କରନ୍ତୁ।' : 'Invalid PIN code! Please use "odia123".');
+    setPinError('');
+    if (!pin) return;
+    setVerifying(true);
+    try {
+      const res = await fetch('/api/admin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin }),
+      });
+      const json = await res.json().catch(() => ({ ok: false }));
+      if (res.ok && json.ok) {
+        setIsAdmin(true);
+        setPin('');
+        try {
+          sessionStorage.setItem(SESSION_KEY, '1');
+        } catch {
+          /* private mode */
+        }
+      } else if (res.status === 403) {
+        setPinError(
+          isOdia
+            ? 'ପରିଚାଳକ ପ୍ରବେଶ ମାଲିକଙ୍କ ଦ୍ୱାରା ବନ୍ଦ ଅଛି।'
+            : 'Admin access is disabled by the site owner.'
+        );
+      } else if (res.status === 429) {
+        setPinError(
+          isOdia ? 'ଅଧିକ ଚେଷ୍ଟା ହୋଇଛି। କିଛି ସମୟ ପରେ ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ।' : 'Too many attempts. Try again in a minute.'
+        );
+      } else {
+        setPinError(isOdia ? 'ଭୁଲ୍ ପିନ୍ କୋଡ୍।' : 'Incorrect PIN.');
+      }
+    } catch {
+      setPinError(isOdia ? 'ସର୍ଭର ସହ ଯୋଗାଯୋଗ ହେଲା ନାହିଁ।' : 'Could not reach the server.');
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -183,30 +245,42 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
             </h3>
             <p className="text-xs text-slate-500">
               {isOdia
-                ? 'ଏହି ଅଂଶ କେବଳ ଅନୁମୋଦିତ ସମ୍ପାଦକ ଓ ପ୍ରଶାସକଙ୍କ ପାଇଁ। ଡେମୋ ପାସୱାର୍ଡ: "odia123"'
-                : 'Protected console for editorial staff. Demo passcode: "odia123"'}
+                ? 'ଏହି ଅଂଶ କେବଳ ସାଇଟ୍ ମାଲିକଙ୍କ ପାଇଁ ସଂରକ୍ଷିତ।'
+                : 'This area is restricted to the site owner.'}
             </p>
 
-            <form onSubmit={handleLogin} className="space-y-3 pt-2">
-              <div>
-                <input
-                  type="password"
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value)}
-                  placeholder="PIN କୋଡ୍ ପ୍ରବେଶ କରନ୍ତୁ (odia123)"
-                  className="w-full text-center px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                />
+            {adminEnabled === false ? (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600">
+                {isOdia
+                  ? 'ପରିଚାଳକ ପ୍ରବେଶ ବର୍ତ୍ତମାନ ବନ୍ଦ ଅଛି।'
+                  : 'Admin access is currently disabled.'}
               </div>
+            ) : (
+              <form onSubmit={handleLogin} className="space-y-3 pt-2">
+                <div>
+                  <input
+                    type="password"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value)}
+                    placeholder={isOdia ? 'ପିନ୍ କୋଡ୍ ପ୍ରବେଶ କରନ୍ତୁ' : 'Enter PIN'}
+                    autoComplete="off"
+                    className="w-full text-center px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                  />
+                </div>
 
-              {pinError && <p className="text-xs text-rose-600 font-medium">{pinError}</p>}
+                {pinError && <p className="text-xs text-rose-600 font-medium">{pinError}</p>}
 
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded-xl text-xs transition-colors cursor-pointer shadow-sm"
-              >
-                {isOdia ? 'ଅନଲକ୍ କରନ୍ତୁ' : 'Unlock Admin Console'}
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  disabled={verifying}
+                  className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white font-semibold rounded-xl text-xs transition-colors cursor-pointer shadow-sm"
+                >
+                  {verifying
+                    ? isOdia ? 'ଯାଞ୍ଚ ହେଉଛି…' : 'Verifying…'
+                    : isOdia ? 'ଅନଲକ୍ କରନ୍ତୁ' : 'Unlock Admin Console'}
+                </button>
+              </form>
+            )}
           </div>
         ) : (
           <>
@@ -440,61 +514,42 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
                 </form>
               )}
 
-              {/* TAB 3: API & INTEGRATIONS */}
+              {/* TAB 3: LIVE FEED STATUS (read-only — keys live in server env, never here) */}
               {activeAdminTab === 'api' && (
-                <div className="space-y-5 max-w-xl">
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 space-y-1">
+                <div className="space-y-4 max-w-xl">
+                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 space-y-1">
                     <div className="flex items-center gap-2 font-bold text-xs">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span>{isOdia ? 'ପ୍ରଦର୍ଶନ ତଥ୍ୟ ମୋଡ୍ (Demo Data Mode)' : 'Demonstration Data Mode Active'}</span>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{isOdia ? 'ଯାଞ୍ଚିତ ଲାଇଭ୍ ଫିଡ୍' : 'Verified live feed'}</span>
                     </div>
                     <p className="text-[11px] leading-relaxed">
                       {isOdia
-                        ? 'ବର୍ତ୍ତମାନ କ୍ରିକେଟ୍ ଓଡ଼ିଆ ପୂର୍ଣ୍ଣ ପ୍ରଦର୍ଶନ (Demo) ମୋଡ୍‌ରେ କାର୍ଯ୍ୟ କରୁଛି। ଯଦି ଆପଣଙ୍କ ପାଖରେ Sportmonks କିମ୍ବା CricAPI ର କ୍ରେଡେନ୍ସିଆଲ୍ ଅଛି, ତେବେ ଏହାକୁ ତଳେ ପ୍ରବେଶ କରନ୍ତୁ।'
-                        : 'Cricket Odia runs a complete demonstration dataset. You can configure legitimate cricket score providers below.'}
+                        ? 'ସ୍କୋର ସର୍ଭରରୁ ସିଧା ଆସୁଛି। ଚାବି (keys) କେବଳ ସର୍ଭର ପରିବେଶରେ ରହେ — ଏଠାରେ କେବେ ପ୍ରବେଶ କରନ୍ତୁ ନାହିଁ।'
+                        : 'Scores come straight from the server. Keys live only in server environment variables — never enter them here.'}
                     </p>
                   </div>
 
-                  <div>
-                    <label className="block font-bold text-slate-800 mb-1">
-                      {isOdia ? 'API ଏଣ୍ଡପଏଣ୍ଟ (Score Endpoint)' : 'Cricket API Endpoint'}
-                    </label>
-                    <input
-                      type="text"
-                      value={apiEndpoint}
-                      onChange={(e) => setApiEndpoint(e.target.value)}
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800"
+                  <div className="space-y-2">
+                    <FeedRow
+                      label={isOdia ? 'CricAPI (ମୁଖ୍ୟ ଫିଡ୍)' : 'CricAPI (primary feed)'}
+                      active={feedStatus?.liveApi === true}
+                      detail={feedStatus?.liveApi ? (isOdia ? 'ସକ୍ରିୟ' : 'Active') : (isOdia ? 'ଚାବି ନାହିଁ' : 'No key set')}
+                    />
+                    <FeedRow
+                      label={isOdia ? 'Cricbuzz (ଦ୍ୱିତୀୟ ଉତ୍ସ)' : 'Cricbuzz (second source)'}
+                      active={Boolean(feedStatus?.secondSource)}
+                      detail={
+                        feedStatus?.secondSource
+                          ? `${isOdia ? 'ସକ୍ରିୟ' : 'Active'} · ${feedStatus?.cricbuzz?.state ?? ''}`
+                          : (isOdia ? 'ଚାବି ନାହିଁ' : 'No key set')
+                      }
+                    />
+                    <FeedRow
+                      label={isOdia ? 'ESPNcricinfo ପୃଷ୍ଠା (ଚାବି ଆବଶ୍ୟକ ନାହିଁ)' : 'ESPNcricinfo page (no key needed)'}
+                      active={feedStatus?.espn?.state === 'ok'}
+                      detail={feedStatus?.espn?.message || feedStatus?.espn?.state || '…'}
                     />
                   </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-800 mb-1">
-                      {isOdia ? 'API କୀ (Private Key - Kept Secure)' : 'API Key (Server Stored)'}
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="କୌଣସି କୀ ଆବଶ୍ୟକ ନାହିଁ (Demo Mode)"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono"
-                    />
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setApiSaveSuccess(true);
-                      setTimeout(() => setApiSaveSuccess(false), 2500);
-                    }}
-                    className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded-xl transition-colors cursor-pointer"
-                  >
-                    {isOdia ? 'ସଂରକ୍ଷଣ କରନ୍ତୁ (Save Settings)' : 'Save API Settings'}
-                  </button>
-
-                  {apiSaveSuccess && (
-                    <p className="text-xs text-emerald-700 font-semibold">
-                      {isOdia ? 'API କନ୍ଫିଗରେସନ୍ ସଂରକ୍ଷିତ ହେଲା!' : 'API configuration saved!'}
-                    </p>
-                  )}
                 </div>
               )}
 
@@ -534,3 +589,17 @@ export const AdminPortalModal: React.FC<AdminPortalModalProps> = ({ onClose }) =
     </div>
   );
 };
+
+const FeedRow: React.FC<{ label: string; active: boolean; detail: string }> = ({
+  label,
+  active,
+  detail,
+}) => (
+  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+    <span className="font-semibold text-slate-800">{label}</span>
+    <span className="flex items-center gap-2 text-[11px]">
+      <span className={`w-2 h-2 rounded-full ${active ? 'bg-emerald-500' : 'bg-slate-300'}`} aria-hidden="true" />
+      <span className={active ? 'text-emerald-700 font-semibold' : 'text-slate-500'}>{detail}</span>
+    </span>
+  </div>
+);

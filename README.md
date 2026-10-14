@@ -49,7 +49,6 @@ also work: build command `npm run build`, output `dist/`. Without the
   - `{ ok: false, reason: 'no-key' }` only when every source is disabled.
 
 ## Frontend
-
 - Hash routes (no router dependency): `#/` home, `#/live`,
   `#/fixtures`, `#/standings`, `#/news`, `#/rankings`, `#/teams`,
   `#/match/:id` (dedicated match page — shareable deep links).
@@ -60,3 +59,12 @@ also work: build command `npm run build`, output `dist/`. Without the
   in `src/index.css`.
 - Live data polls every 30s and swaps state in place — no full-page
   reloads, scroll position preserved.
+
+## Admin console
+
+The admin PIN is verified **server-side** (`ADMIN_PIN` env var) and is
+never bundled into the app or displayed on the site — there is no
+public password. Leave `ADMIN_PIN` empty to disable the console
+entirely. Set it locally in `.env` and on Render as an env var.
+Verification is rate-limited (8 tries/minute/IP). Admin edits and
+published articles affect only that visitor's own browser.

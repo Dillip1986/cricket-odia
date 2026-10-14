@@ -247,6 +247,11 @@ const ESPN_ENABLED = process.env.ESPN_ENABLED !== 'false';
 const ESPN_TTL_MS = Number(process.env.ESPN_TTL_MS || 10 * 60_000);
 const ESPN_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36';
+
+// Admin gate: PIN lives ONLY in server env, never in shipped code.
+// Leave ADMIN_PIN empty to disable the admin console entirely.
+const ADMIN_PIN = process.env.ADMIN_PIN || '';
+const adminAttempts = new Map(); // ip -> { count, resetAt }
 let espnCache = { at: 0, matches: [] };
 let espnCooldownUntil = 0;
 let espnSourceStatus = { state: 'idle', checkedAt: 0, message: '' };
@@ -704,8 +709,34 @@ app.get('/api/health', (_req, res) => {
     secondSource: CRICBUZZ_KEY ? 'cricbuzz' : null,
     cricbuzz: cbzSourceStatus,
     espn: espnSourceStatus,
+    adminEnabled: Boolean(ADMIN_PIN),
     time: new Date().toISOString(),
   });
+});
+
+// --- Admin authentication (PIN verified server-side, rate-limited) ---
+app.get('/api/admin/status', (_req, res) => {
+  res.json({ enabled: Boolean(ADMIN_PIN) });
+});
+
+app.post('/api/admin/verify', (req, res) => {
+  if (!ADMIN_PIN) return res.status(403).json({ ok: false, reason: 'disabled' });
+  const ip = req.ip || 'unknown';
+  const now = Date.now();
+  const rec = adminAttempts.get(ip) || { count: 0, resetAt: now + 60_000 };
+  if (now > rec.resetAt) {
+    rec.count = 0;
+    rec.resetAt = now + 60_000;
+  }
+  rec.count += 1;
+  adminAttempts.set(ip, rec);
+  if (rec.count > 8) return res.status(429).json({ ok: false, reason: 'too-many-attempts' });
+  const pin = String((req.body || {}).pin || '');
+  if (pin.length > 0 && pin.length < 128 && pin === ADMIN_PIN) {
+    return res.json({ ok: true });
+  }
+  // Small delay blunts brute force without hurting real logins.
+  setTimeout(() => res.status(401).json({ ok: false, reason: 'invalid-pin' }), 600);
 });
 
 const STATUS_RANK = { LIVE: 0, UPCOMING: 1, FINISHED: 2 };
