@@ -302,7 +302,42 @@ function espnCategory(seriesName, t1, t2) {
   return 'INTERNATIONAL';
 }
 
+/** ESPN match-page lookup: live-list id → URL parts for the match centre. */
+const espnPageUrls = new Map();
+const centreCache = new Map(); // espn numeric id -> { at, data }
+const CENTRE_TTL_MS = Number(process.env.CENTRE_TTL_MS || 2 * 60_000);
+
+function stripHtml(html) {
+  return String(html || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function textItems(items) {
+  return (Array.isArray(items) ? items : [])
+    .map((t) => (typeof t === 'string' ? t : stripHtml(t && t.html)))
+    .filter(Boolean)
+    .join(' ');
+}
+
 function normalizeEspn(m) {
+  // Remember how to reach this match's ball-by-ball page.
+  if (m && m.id && m.objectId && m.slug && m.series) {
+    espnPageUrls.set(String(m.id), {
+      seriesSlug: m.series.slug,
+      seriesObj: m.series.objectId,
+      matchSlug: m.slug,
+      matchObj: m.objectId,
+    });
+  }
   const sides = Array.isArray(m.teams) ? m.teams : [];
   const s1 = sides[0] || {};
   const s2 = sides[1] || {};
@@ -828,6 +863,229 @@ app.get('/api/live-matches', async (_req, res) => {
     cooldownUntil = Date.now() + (quotaHit ? 60 * 60_000 : ERROR_COOLDOWN_MS);
     if (liveCache.payload) return res.json(liveCache.payload); // serve stale, 200
     res.status(502).json({ ok: false, reason: 'upstream-error', matches: [] });
+  }
+});
+
+function espnEventOf(c) {
+  const runs = Number(c.totalRuns ?? 0);
+  if (c.isWicket) return 'WICKET';
+  if (c.isSix) return 'SIX';
+  if (c.isFour) return 'FOUR';
+  if (Number(c.wides) > 0) return 'WIDE';
+  if (Number(c.noballs) > 0) return 'NO_BALL';
+  if (Number(c.byes) > 0 || Number(c.legbyes) > 0) return 'BYE';
+  if (runs >= 3) return 'THREE';
+  if (runs === 2) return 'TWO';
+  if (runs === 1) return 'ONE';
+  return 'DOT';
+}
+
+function espnPlayerName(p) {
+  return (p && (p.longName || p.name)) || '';
+}
+
+/** Map one Cricinfo ball-comment into the app's CommentaryDelivery shape. */
+function mapEspnBall(c, playerById) {
+  const title = String(c.title || '');
+  const parts = title.split(' to ');
+  const bowler = (c.bowlerPlayerId && playerById[c.bowlerPlayerId]) || (parts[0] || '').trim();
+  const batsman = (c.batsmanPlayerId && playerById[c.batsmanPlayerId]) || (parts[1] || '').trim();
+  const body = textItems(c.commentTextItems) || stripHtml(c.commentPreTextItems && c.commentPreTextItems[0]);
+  const dismissal = stripHtml(c.dismissalText);
+  const text = [body, dismissal].filter(Boolean).join(' ');
+  const over = c.oversActual != null ? String(c.oversActual) : String(c.oversUnique ?? '');
+  const runs = Number(c.totalRuns ?? 0);
+  const event = espnEventOf(c);
+  let ts = '';
+  try {
+    const d = new Date(c.timestamp);
+    if (!Number.isNaN(d.getTime())) {
+      ts = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+  } catch {
+    /* ignore */
+  }
+  return {
+    id: `espn-c-${c.id ?? `${c.inningNumber}-${c.oversUnique}`}`,
+    over,
+    runs,
+    event,
+    commentaryOdia: text,
+    commentaryEn: text,
+    batsmanNameOdia: batsman,
+    bowlerNameOdia: bowler,
+    batsmanNameEn: batsman,
+    bowlerNameEn: bowler,
+    timestamp: ts,
+    isKeyMoment: runs >= 4 || event === 'WICKET',
+  };
+}
+
+function espnOversStr(b) {
+  const balls = Number(b.balls ?? 0);
+  return `${Math.floor(balls / 6)}.${balls % 6}`;
+}
+
+/** Map one Cricinfo innings into the app's InningsScorecard shape. */
+function mapEspnInnings(inn) {
+  const teamName = (inn.team && (inn.team.longName || inn.team.name)) || 'Innings';
+  const batting = (Array.isArray(inn.inningBatsmen) ? inn.inningBatsmen : [])
+    .filter((b) => b && (b.battedType === 'yes' || Number(b.runs) > 0 || b.isOut))
+    .map((b) => ({
+      batsmanName: espnPlayerName(b.player),
+      batsmanNameOdia: espnPlayerName(b.player),
+      dismissal: stripHtml(b.dismissalText) || (b.isOut ? 'out' : 'batting'),
+      runs: Number(b.runs ?? 0),
+      balls: Number(b.balls ?? 0),
+      fours: Number(b.fours ?? 0),
+      sixes: Number(b.sixes ?? 0),
+      strikeRate: Number(b.strikerate ?? 0),
+    }));
+  const bowling = (Array.isArray(inn.inningBowlers) ? inn.inningBowlers : [])
+    .filter((b) => b && b.bowledType === 'yes')
+    .map((b) => {
+      const balls = Number(b.balls ?? 0);
+      return {
+        bowlerName: espnPlayerName(b.player),
+        bowlerNameOdia: espnPlayerName(b.player),
+        overs: espnOversStr(b),
+        maidens: Number(b.maidens ?? 0),
+        runs: Number(b.conceded ?? 0),
+        wickets: Number(b.wickets ?? 0),
+        economy: Number(b.economy ?? 0),
+        dots: Number(b.dots ?? 0),
+      };
+    });
+  const fallOfWickets = (Array.isArray(inn.inningFallOfWickets) ? inn.inningFallOfWickets : []).map((f) => ({
+    score: Number(f.fowRuns ?? 0),
+    wicketNumber: Number(f.fowWicketNum ?? 0),
+    over: String(f.fowOvers ?? ''),
+    batsmanOdia: espnPlayerName(f.dismissalBatsman),
+  }));
+  return {
+    teamName,
+    teamNameOdia: teamName,
+    inningsNumber: Number(inn.inningNumber ?? 1),
+    runs: Number(inn.runs ?? 0),
+    wickets: Number(inn.wickets ?? 0),
+    overs: String(inn.overs ?? ''),
+    extras: {
+      wides: Number(inn.wides ?? 0),
+      noBalls: Number(inn.noballs ?? 0),
+      byes: Number(inn.byes ?? 0),
+      legByes: Number(inn.legbyes ?? 0),
+      total: Number(inn.extras ?? 0),
+    },
+    batting,
+    bowling,
+    fallOfWickets,
+  };
+}
+
+/**
+ * GET /api/match-centre?matchId=espn-<live-list-id>
+ * Ball-by-ball commentary + full scorecard scraped from the match's
+ * Cricinfo page. Cached briefly per match (live data).
+ */
+app.get('/api/match-centre', async (req, res) => {
+  const rawId = String(req.query.matchId || '');
+  const espnId = rawId.startsWith('espn-') ? rawId.slice(5) : rawId;
+  const meta = espnPageUrls.get(espnId);
+  if (!meta || !meta.matchObj || !meta.seriesSlug || !meta.seriesObj || !meta.matchSlug) {
+    return res.json({ ok: false, reason: 'unknown-match', commentary: [], scorecards: [] });
+  }
+  const hit = centreCache.get(espnId);
+  if (hit && Date.now() - hit.at < CENTRE_TTL_MS) {
+    return res.json({ ok: true, cached: true, ...hit.data });
+  }
+  try {
+    const url =
+      `https://www.cricinfo.com/series/${meta.seriesSlug}-${meta.seriesObj}/` +
+      `${meta.matchSlug}-${meta.matchObj}/ball-by-ball-commentary`;
+    const page = await fetch(url, {
+      headers: {
+        'User-Agent': ESPN_UA,
+        Accept: 'text/html',
+      },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!page.ok) throw Object.assign(new Error(`ESPN match page HTTP ${page.status}`), { code: page.status });
+    const html = await page.text();
+    const start = html.indexOf('>', html.indexOf('__NEXT_DATA__')) + 1;
+    const end = html.indexOf('</script>', start);
+    if (start <= 0 || end <= start) throw new Error('ESPN markup changed (no embedded data)');
+    const data = JSON.parse(html.slice(start, end));
+    const content = data.props?.appPageProps?.data?.content || data.props?.pageProps?.data?.content;
+    if (!content) throw new Error('ESPN markup changed (no content)');
+
+    // Player directory for full names.
+    const playerById = {};
+    const inningsRaw = Array.isArray(content.innings) ? content.innings : [];
+    for (const inn of inningsRaw) {
+      for (const b of [...(inn.inningBatsmen || []), ...(inn.inningBowlers || [])]) {
+        if (b && b.player && b.player.id && b.player.longName) playerById[b.player.id] = b.player.longName;
+      }
+    }
+
+    const balls = [
+      ...(Array.isArray(content.comments) ? content.comments : []),
+      ...(Array.isArray(content.recentBallCommentary?.ballComments)
+        ? content.recentBallCommentary.ballComments
+        : []),
+    ];
+    const seenBall = new Set();
+    const commentary = balls
+      .filter((c) => c && (c.id === 0 || c.id) && !seenBall.has(c.id) && seenBall.add(c.id))
+      .map((c) => ({ c, key: `${c.inningNumber}:${c.oversActual ?? c.oversUnique ?? 0}` }))
+      .sort((a, b) => (a.key < b.key ? 1 : -1))
+      .map(({ c }) => mapEspnBall(c, playerById))
+      .filter((c) => c.commentaryEn)
+      .slice(0, 60);
+
+    const scorecards = inningsRaw
+      .filter((inn) => inn && (inn.isBatted || (inn.inningBatsmen || []).length > 0))
+      .map(mapEspnInnings);
+
+    // Current batters/bowler from the latest ball + current innings stats.
+    let currentBatsmen = [];
+    let currentBowlers = [];
+    const currentInn = inningsRaw.find((i) => i.isCurrent) || inningsRaw[inningsRaw.length - 1];
+    if (currentInn) {
+      const notOut = (currentInn.inningBatsmen || []).filter((b) => b && b.battedType === 'yes' && !b.isOut);
+      const lastBall = commentary.length > 0 ? balls.find((c) => `espn-c-${c.id}` === commentary[0].id) : null;
+      const onStrike = lastBall && (playerById[lastBall.batsmanPlayerId] || '');
+      currentBatsmen = notOut.slice(-2).map((b) => ({
+        name: espnPlayerName(b.player),
+        nameOdia: espnPlayerName(b.player),
+        runs: Number(b.runs ?? 0),
+        balls: Number(b.balls ?? 0),
+        fours: Number(b.fours ?? 0),
+        sixes: Number(b.sixes ?? 0),
+        strikeRate: Number(b.strikerate ?? 0),
+        isOnStrike: onStrike ? espnPlayerName(b.player) === onStrike : false,
+      }));
+      const lastBowlerId = lastBall && lastBall.bowlerPlayerId;
+      const lb = (currentInn.inningBowlers || []).find((b) => b && b.player && b.player.id === lastBowlerId)
+        || (currentInn.inningBowlers || [])[(currentInn.inningBowlers || []).length - 1];
+      if (lb) {
+        currentBowlers = [{
+          name: espnPlayerName(lb.player),
+          nameOdia: espnPlayerName(lb.player),
+          overs: espnOversStr(lb),
+          maidens: Number(lb.maidens ?? 0),
+          runs: Number(lb.conceded ?? 0),
+          wickets: Number(lb.wickets ?? 0),
+          economy: Number(lb.economy ?? 0),
+        }];
+      }
+    }
+
+    const result = { commentary, scorecards, currentBatsmen, currentBowlers };
+    centreCache.set(espnId, { at: Date.now(), data: result });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('[match-centre]', e.message);
+    res.status(502).json({ ok: false, reason: 'centre-unavailable', commentary: [], scorecards: [] });
   }
 });
 

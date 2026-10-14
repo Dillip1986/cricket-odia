@@ -78,6 +78,11 @@ const odia = {
   tabTeams: 'ଦଳ',
   tabInfo: 'ସୂଚନା',
 
+  audioListen: 'ଶୁଣନ୍ତୁ',
+  audioStop: 'ବନ୍ଦ କରନ୍ତୁ',
+  audioAuto: 'ସଦ୍ୟ ବଲ୍ ସ୍ୱୟଂ ଶୁଣନ୍ତୁ',
+  audioLoading: 'ବିବରଣୀ ଆସୁଛି…',
+
   footerTagline: 'ଭାରତ ତଥା ବିଶ୍ୱ କ୍ରିକେଟ୍‌ର ଲାଇଭ୍ ସ୍କୋର, ଖବର ଓ ର‍୍ୟାଙ୍କିଙ୍ଗ୍ — ସମ୍ପୂର୍ଣ୍ଣ ଓଡ଼ିଆରେ।',
   footerLinks: 'ଶୀଘ୍ର ଲିଙ୍କ୍',
   footerLiveFeed: 'ଲାଇଭ୍ ଫିଡ୍',
@@ -160,6 +165,11 @@ const english: Record<keyof OdiaStrings, string> = {
   tabPlayingXI: 'Playing XI',
   tabTeams: 'Teams',
   tabInfo: 'Info',
+
+  audioListen: 'Listen',
+  audioStop: 'Stop',
+  audioAuto: 'Auto-read latest ball',
+  audioLoading: 'Loading commentary…',
 
   footerTagline: 'India and world cricket — live scores, news and rankings in pure Odia.',
   footerLinks: 'Quick links',

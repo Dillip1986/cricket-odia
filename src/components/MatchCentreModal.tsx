@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Radio,
@@ -14,10 +14,13 @@ import {
   Layers,
   ArrowLeft,
   Bell,
+  Volume2,
+  Square,
 } from 'lucide-react';
 import { Match, CommentaryDelivery } from '../types/cricket';
 import { useCricket } from '../context/CricketContext';
 import { useStrings } from '../i18n/strings';
+import { useSpeech } from '../hooks/useSpeech';
 import { formatScore, toOdiaDigits, ODIA_DICTIONARY } from '../utils/odiaLocalization';
 
 interface MatchCentreProps {
@@ -27,7 +30,7 @@ interface MatchCentreProps {
   variant?: 'modal' | 'page';
 }
 
-export const MatchCentreContent: React.FC<MatchCentreProps> = ({ match, onClose, variant = 'modal' }) => {
+export const MatchCentreContent: React.FC<MatchCentreProps> = ({ match: baseMatch, onClose, variant = 'modal' }) => {
   const {
     useOdiaDigits,
     language,
@@ -37,6 +40,64 @@ export const MatchCentreContent: React.FC<MatchCentreProps> = ({ match, onClose,
 
   const isOdia = language === 'odia';
   const t = useStrings();
+  const speech = useSpeech();
+
+  // Live match-centre detail (ball-by-ball + full scorecard) for ESPN-sourced
+  // matches. Merged over the feed object so every tab benefits at once.
+  interface CentreDetail {
+    commentary: CommentaryDelivery[];
+    scorecards: Match['scorecards'];
+    currentBatsmen: NonNullable<Match['currentBatsmen']>;
+    currentBowlers: NonNullable<Match['currentBowlers']>;
+  }
+  const [detail, setDetail] = useState<CentreDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const isEspn = baseMatch.id.startsWith('espn-');
+
+  useEffect(() => {
+    if (!isEspn) return;
+    let cancelled = false;
+    setDetailLoading(true);
+    fetch(`/api/match-centre?matchId=${encodeURIComponent(baseMatch.id)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled || !j || !j.ok) return;
+        setDetail({
+          commentary: Array.isArray(j.commentary) ? j.commentary : [],
+          scorecards: Array.isArray(j.scorecards) ? j.scorecards : [],
+          currentBatsmen: Array.isArray(j.currentBatsmen) ? j.currentBatsmen : [],
+          currentBowlers: Array.isArray(j.currentBowlers) ? j.currentBowlers : [],
+        });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseMatch.id, isEspn]);
+
+  const match: Match = detail
+    ? {
+        ...baseMatch,
+        commentary: detail.commentary.length > 0 ? detail.commentary : baseMatch.commentary,
+        scorecards: detail.scorecards.length > 0 ? detail.scorecards : baseMatch.scorecards,
+        currentBatsmen: detail.currentBatsmen.length > 0 ? detail.currentBatsmen : baseMatch.currentBatsmen,
+        currentBowlers: detail.currentBowlers.length > 0 ? detail.currentBowlers : baseMatch.currentBowlers,
+      }
+    : baseMatch;
+
+  // Auto-read the latest ball when the user enables it.
+  const latestId = match.commentary.length > 0 ? match.commentary[0].id : null;
+  const latestText = match.commentary.length > 0 ? match.commentary[0].commentaryEn : '';
+  const latestOver = match.commentary.length > 0 ? match.commentary[0].over : '';
+  useEffect(() => {
+    if (!speech.auto || !latestId) return;
+    speech.speak(`auto-${latestId}`, `Over ${latestOver}. ${latestText}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestId, speech.auto]);
+
   const isLive = match.status === 'LIVE';
   const isUpcoming = match.status === 'UPCOMING';
   const isReminded = hasReminder(match.id);
@@ -523,11 +584,42 @@ export const MatchCentreContent: React.FC<MatchCentreProps> = ({ match, onClose,
                 <span className="text-xs text-slate-500 font-mono">
                   {useOdiaDigits ? toOdiaDigits(filteredCommentary.length) : filteredCommentary.length} {isOdia ? 'ଟି ବଲ୍' : 'deliveries'}
                 </span>
+
+                {/* Native audio readout */}
+                {speech.supported && filteredCommentary.length > 0 && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => speech.setAuto((v) => !v)}
+                      aria-pressed={speech.auto}
+                      title={t.audioAuto}
+                      className={`flex items-center gap-1.5 min-h-[36px] px-3 rounded-lg text-[11px] font-bold transition-colors cursor-pointer border ${
+                        speech.auto
+                          ? 'bg-[#00B887] text-[#04120d] border-[#00B887]'
+                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                      }`}
+                    >
+                      <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span className="hidden sm:inline">{t.audioAuto}</span>
+                    </button>
+                    {speech.speakingId && (
+                      <button
+                        onClick={speech.stop}
+                        title={t.audioStop}
+                        aria-label={t.audioStop}
+                        className="flex items-center justify-center min-w-[36px] min-h-[36px] rounded-lg bg-rose-600 text-white hover:bg-rose-500 transition-colors cursor-pointer"
+                      >
+                        <Square className="w-3.5 h-3.5 fill-white" aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Feed of commentary */}
               <div className="space-y-3">
-                {filteredCommentary.length === 0 ? (
+                {detailLoading && match.commentary.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500 text-xs animate-pulse">{t.audioLoading}</div>
+                ) : filteredCommentary.length === 0 ? (
                   <div className="text-center py-8 text-slate-500 text-xs">
                     {isOdia ? 'କୌଣସି ଧାରାବିବରଣୀ ମିଳିଲା ନାହିଁ।' : 'No commentary matching this filter.'}
                   </div>
@@ -582,9 +674,34 @@ export const MatchCentreContent: React.FC<MatchCentreProps> = ({ match, onClose,
                           </p>
                         </div>
 
-                        {/* Timestamp */}
-                        <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                          {c.timestamp}
+                        {/* Timestamp + audio */}
+                        <span className="flex flex-col items-end gap-1.5 shrink-0">
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {c.timestamp}
+                          </span>
+                          {speech.supported && c.commentaryEn && (
+                            <button
+                              onClick={() =>
+                                speech.speakingId === c.id
+                                  ? speech.stop()
+                                  : speech.speak(c.id, `Over ${c.over}. ${c.bowlerNameEn} to ${c.batsmanNameEn}. ${c.commentaryEn}`)
+                              }
+                              title={speech.speakingId === c.id ? t.audioStop : t.audioListen}
+                              aria-label={`${speech.speakingId === c.id ? t.audioStop : t.audioListen}: ${c.over}`}
+                              aria-pressed={speech.speakingId === c.id}
+                              className={`flex items-center justify-center min-w-[36px] min-h-[36px] rounded-lg transition-colors cursor-pointer ${
+                                speech.speakingId === c.id
+                                  ? 'bg-rose-600 text-white'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-[#00B887]/15 hover:text-[#00966f]'
+                              }`}
+                            >
+                              {speech.speakingId === c.id ? (
+                                <Square className="w-3.5 h-3.5 fill-white" aria-hidden="true" />
+                              ) : (
+                                <Volume2 className="w-4 h-4" aria-hidden="true" />
+                              )}
+                            </button>
+                          )}
                         </span>
                       </div>
                     );

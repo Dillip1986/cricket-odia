@@ -40,6 +40,9 @@ also work: build command `npm run build`, output `dist/`. Without the
 
 - `GET /api/health` → `{ ok, liveApi, secondSource, cricbuzz, espn, time }`
 - `GET /api/live-matches` → `{ ok, matches, fetchedAt, count }`
+- `GET /api/match-centre?matchId=espn-<id>` → `{ ok, commentary[], scorecards[], currentBatsmen[], currentBowlers[] }`
+  - Ball-by-ball commentary + full scorecard scraped from the match's
+    Cricinfo page (2-min cache). Works without any API key.
   - `matches[]`: full `Match` objects, merged from three sources —
     **ESPNcricinfo live page** (same list as cricinfo.com: internationals,
     IPL, Ranji Trophy, women; includes team logos; needs no key),
@@ -59,6 +62,13 @@ also work: build command `npm run build`, output `dist/`. Without the
   in `src/index.css`.
 - Live data polls every 30s and swaps state in place — no full-page
   reloads, scroll position preserved.
+- Match pages load ball-by-ball commentary, full scorecards and
+  at-the-crease players on demand from `/api/match-centre`.
+- Native audio readout of every ball via the Web Speech API
+  (`src/hooks/useSpeech.ts`): per-ball speaker buttons plus an
+  auto-read-latest toggle. Prefers an Odia voice when the device has
+  one, otherwise English. Commentary text itself is Cricinfo English —
+  readout follows the text language.
 
 ## Admin console
 
