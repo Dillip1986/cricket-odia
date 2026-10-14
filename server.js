@@ -17,13 +17,19 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const CRICAPI_KEY = process.env.CRICAPI_KEY || '';
-const CACHE_TTL_MS = Number(process.env.LIVE_CACHE_TTL_MS || 60_000);
+// Free keys allow ~100 upstream hits/day: 10-min live cache + 90-min
+// fixtures cache keeps a full day of browsing inside budget.
+const LIVE_TTL_MS = Number(process.env.LIVE_CACHE_TTL_MS || 10 * 60_000);
+const FIXTURES_TTL_MS = Number(process.env.FIXTURES_CACHE_TTL_MS || 90 * 60_000);
+const ERROR_COOLDOWN_MS = Number(process.env.UPSTREAM_COOLDOWN_MS || 10 * 60_000);
 
 const app = express();
 app.use(express.json());
 
-// --- In-memory cache (respects free-tier rate limits) ---
-let cache = { at: 0, payload: null };
+// --- Caches ---
+let liveCache = { at: 0, payload: null };
+let fixturesCache = { at: 0, games: [] };
+let cooldownUntil = 0;
 
 function normTokens(s) {
   return String(s || '')
@@ -88,8 +94,12 @@ function maxOvers(matchType) {
   return 20;
 }
 
-function ballsFromOvers(overs) {
-  const m = /^\d+\.[0-5]$/.exec(String(overs ?? ''));
+/** Placeholder fixtures ("Tbc vs Tbc") carry no teams — drop them. */
+function isPlaceholder(teams) {
+  return (teams || []).some((t) => /^(tbc|tbd|to be (confirmed|decided))$/i.test(String(t || '').trim()));
+}
+
+function ballsFromOvers(overs) {  const m = /^\d+\.[0-5]$/.exec(String(overs ?? ''));
   if (!m) return 0;
   const [o, b] = String(overs).split('.').map(Number);
   return o * 6 + b;
@@ -217,16 +227,32 @@ function parseOvers(o) {
   return s;
 }
 
-async function fetchUpstream() {
-  const url =
-    `https://api.cricapi.com/v1/currentMatches?apikey=${encodeURIComponent(CRICAPI_KEY)}&offset=0`;
+async function cricGet(endpoint) {
+  const url = `https://api.cricapi.com/v1/${endpoint}?apikey=${encodeURIComponent(CRICAPI_KEY)}&offset=0`;
   const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
-  if (!res.ok) throw new Error(`CricAPI HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`CricAPI ${endpoint} HTTP ${res.status}`);
+    err.code = res.status;
+    throw err;
+  }
   const json = await res.json();
   if (json.status !== 'success' || !Array.isArray(json.data)) {
-    throw new Error(`CricAPI error: ${json.message || json.status || 'unknown'}`);
+    const err = new Error(`CricAPI ${endpoint} error: ${json.message || json.status || 'unknown'}`);
+    err.code = 'bad-payload';
+    throw err;
+  }
+  if (json.info && typeof json.info.hitsToday !== 'undefined') {
+    console.log(`[quota] ${endpoint}: ${json.info.hitsToday}/${json.info.hitsLimit ?? '?'} hits used today`);
   }
   return json.data;
+}
+
+async function fetchLiveGames() {
+  return cricGet('currentMatches');
+}
+
+async function fetchFixtureGames() {
+  return cricGet('matches');
 }
 
 app.get('/api/health', (_req, res) => {
@@ -238,18 +264,46 @@ app.get('/api/live-matches', async (_req, res) => {
     return res.json({ ok: false, reason: 'no-key', matches: [], fetchedAt: Date.now() });
   }
   try {
-    if (Date.now() - cache.at < CACHE_TTL_MS && cache.payload) {
-      return res.json(cache.payload);
+    // Quota backoff: after an upstream failure, serve stale cache only.
+    if (Date.now() < cooldownUntil) {
+      if (liveCache.payload) return res.json(liveCache.payload);
+      return res.status(502).json({ ok: false, reason: 'upstream-cooldown', matches: [] });
     }
-    const games = await fetchUpstream();
+    if (Date.now() - liveCache.at < LIVE_TTL_MS && liveCache.payload) {
+      return res.json(liveCache.payload);
+    }
+    // 1) Live + recent games with scores (primary, every cycle).
+    const games = await fetchLiveGames();
+    const seen = new Set(games.map((g) => g && g.id).filter(Boolean));
     const matches = games
-      .filter((g) => g && Array.isArray(g.teams) && g.teams.length >= 2)
+      .filter((g) => g && Array.isArray(g.teams) && g.teams.length >= 2 && !isPlaceholder(g.teams))
       .map(normalizeMatch);
+
+    // 2) Upcoming fixtures (cheap: refreshed rarely, merged by id).
+    if (Date.now() - fixturesCache.at > FIXTURES_TTL_MS) {
+      try {
+        fixturesCache = { at: Date.now(), games: await fetchFixtureGames() };
+      } catch (e) {
+        console.error('[fixtures]', e.message);
+      }
+    }
+    for (const g of fixturesCache.games) {
+      if (!g || !g.id || seen.has(g.id)) continue;
+      if (g.matchStarted || g.matchEnded) continue;
+      if (!Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
+      seen.add(g.id);
+      matches.push(normalizeMatch(g));
+    }
+
     const payload = { ok: true, matches, fetchedAt: Date.now(), count: games.length };
-    cache = { at: Date.now(), payload };
+    liveCache = { at: Date.now(), payload };
     res.json(payload);
   } catch (err) {
     console.error('[live-matches]', err.message);
+    // Back off harder on rate-limit/quota responses.
+    const quotaHit = err.code === 429 || /credit|quota|limit|auth|key/i.test(err.message);
+    cooldownUntil = Date.now() + (quotaHit ? 60 * 60_000 : ERROR_COOLDOWN_MS);
+    if (liveCache.payload) return res.json(liveCache.payload); // serve stale, 200
     res.status(502).json({ ok: false, reason: 'upstream-error', matches: [] });
   }
 });
