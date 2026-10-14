@@ -245,6 +245,9 @@ function parseOvers(o) {
 // ---------------------------------------------------------------------------
 let cbzCache = { at: 0, fixAt: 0, live: [], upcoming: [] };
 let cbzCooldownUntil = 0;
+let cbzSourceStatus = { state: 'idle', checkedAt: 0, message: '' };
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function fetchCricbuzz(path) {
   const res = await fetch(`https://${CRICBUZZ_HOST}${path}`, {
@@ -439,33 +442,50 @@ function normalizeCbz(info) {
 async function loadCricbuzzMatches() {
   if (!CRICBUZZ_KEY) return [];
   const now = Date.now();
+  // Independent fetches: one endpoint failing must not discard the others.
+  // Sequential with a gap — free plans enforce strict per-second limits.
   if (now - cbzCache.at > CBZ_LIVE_TTL_MS || cbzCache.live.length === 0) {
-    if (now < cbzCooldownUntil) return [...cbzCache.live, ...cbzCache.upcoming];
-    try {
-      const [live, recent] = await Promise.all([
-        fetchCricbuzz('/matches/v1/live'),
-        fetchCricbuzz('/matches/v1/recent'),
-      ]);
-      cbzCache.live = [...flattenCbz(live), ...flattenCbz(recent)].filter(
+    if (now >= cbzCooldownUntil) {
+      const fresh = [];
+      for (const path of ['/matches/v1/live', '/matches/v1/recent']) {
+        try {
+          const json = await fetchCricbuzz(path);
+          fresh.push(...flattenCbz(json));
+        } catch (e) {
+          console.error(`[cricbuzz${path}]`, e.message);
+          cbzSourceStatus = { state: e.code === 429 ? 'rate-limited' : 'error', checkedAt: Date.now(), message: e.message.slice(0, 120) };
+          if (e.code === 429 || e.code === 403) cbzCooldownUntil = now + 60 * 60_000;
+        }
+        await sleep(2500);
+      }
+      const valid = fresh.filter(
         (i) => i && i.matchId && !isPlaceholder([i.team1?.teamName, i.team2?.teamName])
       );
-      cbzCache.at = now;
-    } catch (e) {
-      console.error('[cricbuzz-live]', e.message);
-      if (e.code === 429 || e.code === 403) cbzCooldownUntil = now + 60 * 60_000;
+      if (valid.length > 0) {
+        cbzCache.live = valid;
+        cbzCache.at = now;
+        cbzSourceStatus = { state: 'ok', checkedAt: Date.now(), message: `${valid.length} matches` };
+      } else if (cbzCache.live.length === 0 && !cbzSourceStatus.message) {
+        cbzSourceStatus = { state: 'empty', checkedAt: Date.now(), message: 'no matches returned' };
+      }
     }
   }
   if (now - cbzCache.fixAt > CBZ_FIX_TTL_MS) {
-    if (now < cbzCooldownUntil) return [...cbzCache.live, ...cbzCache.upcoming];
-    try {
-      const up = await fetchCricbuzz('/matches/v1/upcoming');
-      cbzCache.upcoming = flattenCbz(up).filter(
-        (i) => i && i.matchId && !isPlaceholder([i.team1?.teamName, i.team2?.teamName])
-      );
-      cbzCache.fixAt = now;
-    } catch (e) {
-      console.error('[cricbuzz-upcoming]', e.message);
-      if (e.code === 429 || e.code === 403) cbzCooldownUntil = now + 60 * 60_000;
+    if (now >= cbzCooldownUntil) {
+      try {
+        const up = await fetchCricbuzz('/matches/v1/upcoming');
+        const valid = flattenCbz(up).filter(
+          (i) => i && i.matchId && !isPlaceholder([i.team1?.teamName, i.team2?.teamName])
+        );
+        if (valid.length > 0) {
+          cbzCache.upcoming = valid;
+          cbzCache.fixAt = now;
+        }
+      } catch (e) {
+        console.error('[cricbuzz-upcoming]', e.message);
+        cbzSourceStatus = { state: e.code === 429 ? 'rate-limited' : 'error', checkedAt: Date.now(), message: e.message.slice(0, 120) };
+        if (e.code === 429 || e.code === 403) cbzCooldownUntil = now + 60 * 60_000;
+      }
     }
   }
   return [...cbzCache.live, ...cbzCache.upcoming].map(normalizeCbz);
@@ -509,6 +529,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     liveApi: Boolean(CRICAPI_KEY),
     secondSource: CRICBUZZ_KEY ? 'cricbuzz' : null,
+    cricbuzz: cbzSourceStatus,
     time: new Date().toISOString(),
   });
 });
