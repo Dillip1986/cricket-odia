@@ -123,7 +123,8 @@ function normalizeMatch(g) {
   const t1Name = teams[0] || 'Team 1';
   const t2Name = teams[1] || 'Team 2';
   const format = formatLabel(g.matchType, g.name, scores);
-  const status = g.matchEnded ? 'FINISHED' : g.matchStarted ? 'LIVE' : 'UPCOMING';
+  let status = g.matchEnded ? 'FINISHED' : g.matchStarted ? 'LIVE' : 'UPCOMING';
+  if (isResultText(g.status)) status = 'FINISHED'; // flags lag; decided game ≠ live
   const isWomen = teams.some((t) => String(t).toLowerCase().includes('women'));
 
   const entryFor = (name, short) => {
@@ -282,9 +283,24 @@ function espnParseScore(score, scoreInfo) {
 
 function espnStatus(state) {
   const s = String(state || '').toUpperCase();
-  if (s === 'PRE' || s === 'UPCOMING' || s === 'SQUADS') return 'UPCOMING';
-  if (s === 'RESULT' || s === 'DRAW' || s === 'TIE' || s === 'ABANDONED' || s === 'CANCELLED' || s === 'NO RESULT') return 'FINISHED';
-  return 'LIVE';
+  if (s.includes('PRE') || s.includes('UPCOMING') || s.includes('SQUAD')) return 'UPCOMING';
+  if (
+    s.includes('COMPLETE') || s.includes('RESULT') || s.includes('DRAWN') ||
+    s.includes('DRAW') || s.includes('TIE') || s.includes('ABANDON') ||
+    s.includes('CANCEL') || s.includes('NO RESULT')
+  ) return 'FINISHED';
+  return 'LIVE'; // Live, Stumps, Innings Break, Rain Delay, Toss…
+}
+
+/**
+ * Provider flags sometimes lag behind the status line ("X won by …" while
+ * the game is still flagged live). The text is authoritative: a decided
+ * game is never LIVE.
+ */
+function isResultText(s) {
+  return /won by|win by|wins by|drawn|match drawn|tied|match tied|no result|abandoned|cancelled/i.test(
+    String(s || '')
+  );
 }
 
 function espnFormat(format) {
@@ -345,7 +361,8 @@ function normalizeEspn(m) {
   const n2 = s2.team?.longName || s2.team?.name || 'Team 2';
   const short1 = String(s1.team?.abbreviation || shortFor(n1, [])).toUpperCase().slice(0, 7);
   const short2 = String(s2.team?.abbreviation || shortFor(n2, [])).toUpperCase().slice(0, 7);
-  const status = espnStatus(m.state);
+  let status = espnStatus(m.state);
+  if (isResultText(m.statusText) || isResultText(m.status)) status = 'FINISHED';
   const format = espnFormat(m.format);
   const seriesName = m.series?.longName || m.series?.name || '';
   const season = m.series?.season ? ` ${m.series.season}` : '';
@@ -570,7 +587,8 @@ function normalizeCbz(info) {
   const t1Short = String(t1.teamSName || shortFor(t1Name, [])).toUpperCase().slice(0, 7);
   const t2Short = String(t2.teamSName || shortFor(t2Name, [])).toUpperCase().slice(0, 7);
   const scores = cbzScores(info);
-  const status = cbzStatus(info);
+  let status = cbzStatus(info);
+  if (isResultText(info.status)) status = 'FINISHED';
   const format = cbzFormat(info);
   const seriesName = info.seriesName || info._seriesName || '';
   const isWomen =
@@ -806,34 +824,41 @@ app.get('/api/live-matches', async (_req, res) => {
     }
 
     // Source A: CricAPI (when keyed; fixtures ESPN already has are skipped).
+    // One source failing must never discard the others.
     if (CRICAPI_KEY) {
-      // 1) Live + recent games with scores (primary, every cycle).
-      const games = await fetchLiveGames();
-      count += games.length;
-      const seen = new Set(games.map((g) => g && g.id).filter(Boolean));
-      for (const g of games) {
-        if (!g || !Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
-        const nm = normalizeMatch(g);
-        if (hasFixture(matches, nm.team1.name, nm.team2.name)) continue; // ESPN wins
-        matches.push(nm);
-      }
-
-      // 2) Upcoming fixtures (cheap: refreshed rarely, merged by id).
-      if (Date.now() - fixturesCache.at > FIXTURES_TTL_MS) {
-        try {
-          fixturesCache = { at: Date.now(), games: await fetchFixtureGames() };
-        } catch (e) {
-          console.error('[fixtures]', e.message);
+      try {
+        // 1) Live + recent games with scores (primary, every cycle).
+        const games = await fetchLiveGames();
+        count += games.length;
+        const seen = new Set(games.map((g) => g && g.id).filter(Boolean));
+        for (const g of games) {
+          if (!g || !Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
+          const nm = normalizeMatch(g);
+          if (hasFixture(matches, nm.team1.name, nm.team2.name)) continue; // ESPN wins
+          matches.push(nm);
         }
-      }
-      for (const g of fixturesCache.games) {
-        if (!g || !g.id || seen.has(g.id)) continue;
-        if (g.matchStarted || g.matchEnded) continue;
-        if (!Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
-        seen.add(g.id);
-        const nm = normalizeMatch(g);
-        if (hasFixture(matches, nm.team1.name, nm.team2.name)) continue; // ESPN wins
-        matches.push(nm);
+
+        // 2) Upcoming fixtures (cheap: refreshed rarely, merged by id).
+        if (Date.now() - fixturesCache.at > FIXTURES_TTL_MS) {
+          try {
+            fixturesCache = { at: Date.now(), games: await fetchFixtureGames() };
+          } catch (e) {
+            console.error('[fixtures]', e.message);
+          }
+        }
+        for (const g of fixturesCache.games) {
+          if (!g || !g.id || seen.has(g.id)) continue;
+          if (g.matchStarted || g.matchEnded) continue;
+          if (!Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
+          seen.add(g.id);
+          const nm = normalizeMatch(g);
+          if (hasFixture(matches, nm.team1.name, nm.team2.name)) continue; // ESPN wins
+          matches.push(nm);
+        }
+      } catch (e) {
+        console.error('[cricapi-merge]', e.message);
+        const quotaHit = /credit|quota|limit|auth|key|failure/i.test(e.message);
+        cooldownUntil = Date.now() + (quotaHit ? 60 * 60_000 : ERROR_COOLDOWN_MS);
       }
     }
 
