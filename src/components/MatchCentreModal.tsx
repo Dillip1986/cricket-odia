@@ -154,10 +154,23 @@ export const MatchCentreContent: React.FC<MatchCentreProps> = ({ match, onClose,
             {/* Team 1 */}
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
               <div className="flex items-center gap-3">
-                <div
-                  className="w-5 h-5 rounded-full shadow-sm shrink-0 border border-white/20"
-                  style={{ backgroundColor: match.team1.flagColor }}
-                />
+                <span className="relative w-5 h-5 shrink-0" aria-hidden="true">
+                  <span
+                    className="absolute inset-0 rounded-full shadow-sm border border-white/20"
+                    style={{ backgroundColor: match.team1.flagColor }}
+                  />
+                  {match.team1.logoUrl && (
+                    <img
+                      src={match.team1.logoUrl}
+                      alt=""
+                      loading="lazy"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                      className="absolute inset-0 w-5 h-5 rounded-full object-cover bg-white"
+                    />
+                  )}
+                </span>
                 <div>
                   <h3 className="font-semibold text-white text-base">
                     {isOdia ? match.team1.nameOdia : match.team1.name}
@@ -184,10 +197,23 @@ export const MatchCentreContent: React.FC<MatchCentreProps> = ({ match, onClose,
               match.team2.isBatting ? 'bg-emerald-950/40 border-emerald-500/40' : 'bg-slate-900/60 border-slate-800'
             }`}>
               <div className="flex items-center gap-3">
-                <div
-                  className="w-5 h-5 rounded-full shadow-sm shrink-0 border border-white/20"
-                  style={{ backgroundColor: match.team2.flagColor }}
-                />
+                <span className="relative w-5 h-5 shrink-0" aria-hidden="true">
+                  <span
+                    className="absolute inset-0 rounded-full shadow-sm border border-white/20"
+                    style={{ backgroundColor: match.team2.flagColor }}
+                  />
+                  {match.team2.logoUrl && (
+                    <img
+                      src={match.team2.logoUrl}
+                      alt=""
+                      loading="lazy"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                      className="absolute inset-0 w-5 h-5 rounded-full object-cover bg-white"
+                    />
+                  )}
+                </span>
                 <div>
                   <h3 className="font-semibold text-white text-base">
                     {isOdia ? match.team2.nameOdia : match.team2.name}

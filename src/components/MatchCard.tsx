@@ -119,11 +119,23 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, featured = false })
         {([match.team1, match.team2] as const).map((team) => (
           <div key={team.id} className="flex items-center justify-between gap-3 min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
-              <span
-                className="w-4 h-4 rounded-full shrink-0 shadow-sm border border-black/10"
-                style={{ backgroundColor: team.flagColor }}
-                aria-hidden="true"
-              />
+              <span className="relative w-4 h-4 shrink-0" aria-hidden="true">
+                <span
+                  className="absolute inset-0 rounded-full shadow-sm border border-black/10"
+                  style={{ backgroundColor: team.flagColor }}
+                />
+                {team.logoUrl && (
+                  <img
+                    src={team.logoUrl}
+                    alt=""
+                    loading="lazy"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                    className="absolute inset-0 w-4 h-4 rounded-full object-cover bg-white"
+                  />
+                )}
+              </span>
               <span
                 className={`text-[15px] font-semibold truncate min-w-0 ${
                   team.isBatting ? 'text-emerald-800 dark:text-[#00e6a8]' : 'text-slate-800 dark:text-slate-100'

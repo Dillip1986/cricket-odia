@@ -38,11 +38,15 @@ also work: build command `npm run build`, output `dist/`. Without the
 
 ## API
 
-- `GET /api/health` → `{ ok, liveApi, time }`
+- `GET /api/health` → `{ ok, liveApi, secondSource, cricbuzz, espn, time }`
 - `GET /api/live-matches` → `{ ok, matches, fetchedAt, count }`
-  - `matches[]`: full `Match` objects normalized from CricAPI
-    (scores, overs, CRR/RRR, chase equations, venues, status).
-  - `{ ok: false, reason: 'no-key' }` when `CRICAPI_KEY` is unset.
+  - `matches[]`: full `Match` objects, merged from three sources —
+    **ESPNcricinfo live page** (same list as cricinfo.com: internationals,
+    IPL, Ranji Trophy, women; includes team logos; needs no key),
+    CricAPI (needs `CRICAPI_KEY`), and Cricbuzz via RapidAPI
+    (needs `CRICBUZZ_KEY`). ESPN wins fixtures present on multiple
+    sources; duplicates are dropped; list is sorted LIVE → upcoming → results.
+  - `{ ok: false, reason: 'no-key' }` only when every source is disabled.
 
 ## Frontend
 

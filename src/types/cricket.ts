@@ -43,6 +43,8 @@ export interface TeamMatchInfo {
   shortName: string;
   shortNameOdia: string;
   flagColor: string;
+  /** Absolute team logo URL (optional; UI falls back to the color dot). */
+  logoUrl?: string;
   score?: number;
   wickets?: number;
   overs?: string;

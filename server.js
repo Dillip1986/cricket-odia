@@ -241,6 +241,179 @@ function parseOvers(o) {
 }
 
 // ---------------------------------------------------------------------------
+// Source C: ESPNcricinfo live page (no key needed — same data as cricinfo.com)
+// ---------------------------------------------------------------------------
+const ESPN_ENABLED = process.env.ESPN_ENABLED !== 'false';
+const ESPN_TTL_MS = Number(process.env.ESPN_TTL_MS || 10 * 60_000);
+const ESPN_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36';
+let espnCache = { at: 0, matches: [] };
+let espnCooldownUntil = 0;
+let espnSourceStatus = { state: 'idle', checkedAt: 0, message: '' };
+
+function espnLogoUrl(imageUrl) {
+  const u = String(imageUrl || '');
+  if (!u.startsWith('/lsci/')) return undefined;
+  return `https://img1.hscicdn.com/image/upload/f_auto,t_ds_square_w_160,q_50${u}`;
+}
+
+/** "220 & 44/2" → [{r:220},{r:44,w:2}]; overs from scoreInfo like "13.5 ov". */
+function espnParseScore(score, scoreInfo) {
+  const innings = String(score || '')
+    .split('&')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const m = /^(\d+)(?:\/(\d+))?/.exec(s);
+      if (!m) return null;
+      return { r: Number(m[1]), w: m[2] !== undefined ? Math.min(10, Number(m[2])) : 0 };
+    })
+    .filter(Boolean);
+  let overs;
+  const om = /([\d.]+)\s*ov/i.exec(String(scoreInfo || ''));
+  if (om && /^\d+\.[0-5]$/.test(om[1])) overs = om[1];
+  return { innings, overs };
+}
+
+function espnStatus(state) {
+  const s = String(state || '').toUpperCase();
+  if (s === 'PRE' || s === 'UPCOMING' || s === 'SQUADS') return 'UPCOMING';
+  if (s === 'RESULT' || s === 'DRAW' || s === 'TIE' || s === 'ABANDONED' || s === 'CANCELLED' || s === 'NO RESULT') return 'FINISHED';
+  return 'LIVE';
+}
+
+function espnFormat(format) {
+  const f = String(format || '').toUpperCase();
+  if (f.includes('ODI') || f.includes('ODM') || f.includes('LIST')) return 'ODI';
+  if (f.includes('TEST') || f.includes('FIRST') || f.includes('FC')) return 'TEST';
+  return 'T20';
+}
+
+function espnCategory(seriesName, t1, t2) {
+  const s = `${seriesName} ${t1} ${t2}`.toLowerCase();
+  if (/women|w\.?odi|w\.?t20|wtest/.test(s)) return 'WOMEN';
+  if (/ranji|sheffield|county|qea trophy|duleep|plate|first-class| 4-day|test championship/i.test(s)) return 'DOMESTIC';
+  if (/ipl|bbl|psl|cpl|sa20|hundred|bpl|lpl|mlc|t20 blast|super smash|ilt20/i.test(s)) return 'IPL';
+  return 'INTERNATIONAL';
+}
+
+function normalizeEspn(m) {
+  const sides = Array.isArray(m.teams) ? m.teams : [];
+  const s1 = sides[0] || {};
+  const s2 = sides[1] || {};
+  const n1 = s1.team?.longName || s1.team?.name || 'Team 1';
+  const n2 = s2.team?.longName || s2.team?.name || 'Team 2';
+  const short1 = String(s1.team?.abbreviation || shortFor(n1, [])).toUpperCase().slice(0, 7);
+  const short2 = String(s2.team?.abbreviation || shortFor(n2, [])).toUpperCase().slice(0, 7);
+  const status = espnStatus(m.state);
+  const format = espnFormat(m.format);
+  const seriesName = m.series?.longName || m.series?.name || '';
+  const season = m.series?.season ? ` ${m.series.season}` : '';
+
+  const mkTeam = (side, name, short, inningsLabel) => {
+    const { innings, overs } = espnParseScore(side.score, side.scoreInfo);
+    const first = innings[0];
+    const second = innings[1];
+    const team = {
+      id: `espn-${normTokens(name) || short.toLowerCase()}`,
+      name,
+      nameOdia: name,
+      shortName: short,
+      shortNameOdia: short,
+      flagColor: colorFor(name),
+      logoUrl: espnLogoUrl(side.team?.imageUrl),
+      isBatting: status === 'LIVE' ? Boolean(side.isLive) : false,
+      inningsDescription: inningsLabel,
+    };
+    if (first) {
+      team.score = first.r;
+      team.wickets = first.w;
+      // Overs belong to the latest innings; single-innings side gets them.
+      if (overs && (!second || side.isLive)) team.overs = overs;
+    }
+    if (second) {
+      team.secondInningsScore = second.r;
+      team.secondInningsWickets = second.w;
+      if (overs && side.isLive) team.secondInningsOvers = overs;
+    }
+    return team;
+  };
+
+  const team1 = mkTeam(s1, n1, short1, '1st Innings');
+  const team2 = mkTeam(s2, n2, short2, '2nd Innings');
+  const ground = m.ground || {};
+  const venueStr = ground.longName || ground.name || '—';
+  const cityStr = ground.town?.name || ground.smallName || venueStr;
+  const statusLine = String(m.statusText || m.status || '').trim() || '—';
+  const dateStr = String(m.startDate || '').slice(0, 10);
+  const recentBalls = Array.isArray(m.liveRecentBalls)
+    ? m.liveRecentBalls.map(String).slice(0, 6)
+    : [];
+  const match = {
+    id: `espn-${m.id}`,
+    title: `${n1} vs ${n2}${seriesName ? `, ${seriesName}${season}` : ''}`,
+    titleOdia: `${n1} vs ${n2}${seriesName ? `, ${seriesName}${season}` : ''}`,
+    series: seriesName || 'Live Cricket',
+    seriesOdia: seriesName || 'ଲାଇଭ୍ କ୍ରିକେଟ୍',
+    format,
+    status,
+    statusTextOdia: statusLine,
+    liveSummaryEn: statusLine,
+    category: espnCategory(seriesName, n1, n2),
+    team1,
+    team2,
+    venue: venueStr,
+    venueOdia: venueStr,
+    venueCityOdia: cityStr,
+    dateStrOdia: dateStr,
+    dateStrEn: dateStr,
+    tossOdia: '',
+    recentBalls,
+    commentary: [],
+    scorecards: [],
+    playingXI: { team1: [], team2: [] },
+    isVerifiedApi: true,
+  };
+  return applyChaseMath(match, team1, team2, maxOvers(format), status);
+}
+
+async function loadEspnMatches() {
+  if (!ESPN_ENABLED) return [];
+  const now = Date.now();
+  if (now - espnCache.at < ESPN_TTL_MS && espnCache.matches.length > 0) {
+    return espnCache.matches;
+  }
+  if (now < espnCooldownUntil) return espnCache.matches;
+  try {
+    const res = await fetch('https://www.espncricinfo.com/live-cricket-score', {
+      headers: { 'User-Agent': ESPN_UA, Accept: 'text/html' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) throw Object.assign(new Error(`ESPN page HTTP ${res.status}`), { code: res.status });
+    const html = await res.text();
+    const start = html.indexOf('>', html.indexOf('__NEXT_DATA__')) + 1;
+    const end = html.indexOf('</script>', start);
+    if (start <= 0 || end <= start) throw new Error('ESPN markup changed (no embedded data)');
+    const data = JSON.parse(html.slice(start, end));
+    const pp = data.props?.appPageProps || data.props?.pageProps;
+    const list = pp?.data?.content?.matches;
+    if (!Array.isArray(list)) throw new Error('ESPN markup changed (no matches array)');
+    const matches = list
+      .filter((g) => g && g.id && Array.isArray(g.teams) && g.teams.length >= 2)
+      .filter((g) => !isPlaceholder([(g.teams[0] || {}).team?.name, (g.teams[1] || {}).team?.name]))
+      .map(normalizeEspn);
+    espnCache = { at: now, matches };
+    espnSourceStatus = { state: 'ok', checkedAt: now, message: `${matches.length} matches` };
+    return matches;
+  } catch (e) {
+    console.error('[espn]', e.message);
+    espnSourceStatus = { state: 'error', checkedAt: Date.now(), message: String(e.message).slice(0, 120) };
+    espnCooldownUntil = now + 30 * 60_000;
+    return espnCache.matches;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Source B: Cricbuzz via RapidAPI
 // ---------------------------------------------------------------------------
 let cbzCache = { at: 0, fixAt: 0, live: [], upcoming: [] };
@@ -530,6 +703,7 @@ app.get('/api/health', (_req, res) => {
     liveApi: Boolean(CRICAPI_KEY),
     secondSource: CRICBUZZ_KEY ? 'cricbuzz' : null,
     cricbuzz: cbzSourceStatus,
+    espn: espnSourceStatus,
     time: new Date().toISOString(),
   });
 });
@@ -537,7 +711,8 @@ app.get('/api/health', (_req, res) => {
 const STATUS_RANK = { LIVE: 0, UPCOMING: 1, FINISHED: 2 };
 
 app.get('/api/live-matches', async (_req, res) => {
-  if (!CRICAPI_KEY && !CRICBUZZ_KEY) {
+  // ESPN needs no key; each keyed source self-guards. All missing → no-key.
+  if (!CRICAPI_KEY && !CRICBUZZ_KEY && !ESPN_ENABLED) {
     return res.json({ ok: false, reason: 'no-key', matches: [], fetchedAt: Date.now() });
   }
   try {
@@ -551,8 +726,20 @@ app.get('/api/live-matches', async (_req, res) => {
     }
     const matches = [];
     let count = 0;
+    const teamPair = (m) => [m.team1.name, m.team2.name];
+    const hasFixture = (list, t1, t2) =>
+      list.some((m) => sameFixture(teamPair(m), [t1, t2]));
 
-    // Source A: CricAPI (when keyed).
+    // Source C: ESPNcricinfo live page (editorial priority — same list as cricinfo.com).
+    try {
+      const espn = await loadEspnMatches();
+      count += espn.length;
+      matches.push(...espn);
+    } catch (e) {
+      console.error('[espn-merge]', e.message);
+    }
+
+    // Source A: CricAPI (when keyed; fixtures ESPN already has are skipped).
     if (CRICAPI_KEY) {
       // 1) Live + recent games with scores (primary, every cycle).
       const games = await fetchLiveGames();
@@ -560,7 +747,9 @@ app.get('/api/live-matches', async (_req, res) => {
       const seen = new Set(games.map((g) => g && g.id).filter(Boolean));
       for (const g of games) {
         if (!g || !Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
-        matches.push(normalizeMatch(g));
+        const nm = normalizeMatch(g);
+        if (hasFixture(matches, nm.team1.name, nm.team2.name)) continue; // ESPN wins
+        matches.push(nm);
       }
 
       // 2) Upcoming fixtures (cheap: refreshed rarely, merged by id).
@@ -576,24 +765,20 @@ app.get('/api/live-matches', async (_req, res) => {
         if (g.matchStarted || g.matchEnded) continue;
         if (!Array.isArray(g.teams) || g.teams.length < 2 || isPlaceholder(g.teams)) continue;
         seen.add(g.id);
-        matches.push(normalizeMatch(g));
+        const nm = normalizeMatch(g);
+        if (hasFixture(matches, nm.team1.name, nm.team2.name)) continue; // ESPN wins
+        matches.push(nm);
       }
     }
 
-    // Source B: Cricbuzz via RapidAPI (broader coverage: IND men, IPL, Ranji).
-    // Cricbuzz wins fixtures present on both providers.
+    // Source B: Cricbuzz via RapidAPI — fills gaps (keeps ESPN/CricAPI versions on collision).
     if (CRICBUZZ_KEY) {
       try {
         const cbz = await loadCricbuzzMatches();
         count += cbz.length;
-        const cbzTeams = (m) => [m.team1.name, m.team2.name];
-        const merged = [];
-        for (const m of matches) {
-          const dup = cbz.some((c) => sameFixture(cbzTeams(c), [m.team1.name, m.team2.name]));
-          if (!dup) merged.push(m);
+        for (const c of cbz) {
+          if (!hasFixture(matches, c.team1.name, c.team2.name)) matches.push(c);
         }
-        matches.length = 0;
-        matches.push(...cbz, ...merged);
       } catch (e) {
         console.error('[cricbuzz-merge]', e.message);
       }
