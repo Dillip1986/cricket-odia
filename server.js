@@ -16,7 +16,7 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 // Live-payload cache (served to all visitors; upstream fetched rarely).
-const LIVE_TTL_MS = Number(process.env.LIVE_CACHE_TTL_MS || 10 * 60_000);
+const LIVE_TTL_MS = Number(process.env.LIVE_CACHE_TTL_MS || 5 * 60_000);
 const ERROR_COOLDOWN_MS = Number(process.env.UPSTREAM_COOLDOWN_MS || 10 * 60_000);
 
 // Second source: Cricbuzz via RapidAPI (extra internationals, leagues,
@@ -150,7 +150,8 @@ function parseOvers(o) {
 // Source C: ESPNcricinfo live page (no key needed — same data as cricinfo.com)
 // ---------------------------------------------------------------------------
 const ESPN_ENABLED = process.env.ESPN_ENABLED !== 'false';
-const ESPN_TTL_MS = Number(process.env.ESPN_TTL_MS || 10 * 60_000);
+// Short TTL: ESPN is keyless, so flips from LIVE to result appear fast.
+const ESPN_TTL_MS = Number(process.env.ESPN_TTL_MS || 3 * 60_000);
 const ESPN_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36';
 

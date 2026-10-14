@@ -67,6 +67,20 @@ function CricketApp() {
     ? matches.find((m) => m.id === route.matchId) ?? null
     : null;
 
+  // If a finished game drops off the fresh feed while being read, keep
+  // showing the last-known card (marked finished) instead of a dead end.
+  const [lastMatch, setLastMatch] = useState<(typeof matches)[number] | null>(null);
+  useEffect(() => {
+    if (activeMatch) setLastMatch(activeMatch);
+  }, [activeMatch]);
+  const shownMatch =
+    activeMatch ??
+    (lastMatch && route.matchId === lastMatch.id
+      ? lastMatch.status === 'LIVE'
+        ? { ...lastMatch, status: 'FINISHED' as const }
+        : lastMatch
+      : null);
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-[#071426] text-slate-900 dark:text-slate-100 flex flex-col font-odia antialiased">
       <a
@@ -108,7 +122,7 @@ function CricketApp() {
       <main id="main-content" className="flex-1 w-full">
         <div className="app-container py-5 sm:py-7">
           {route.matchId ? (
-            <MatchCentrePage matchId={route.matchId} match={activeMatch} />
+            <MatchCentrePage matchId={route.matchId} match={shownMatch} />
           ) : (
             <>
               {currentTab === 'home' && (

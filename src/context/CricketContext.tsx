@@ -187,9 +187,17 @@ export const CricketProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setMatches(live);
     setLiveSource('api');
     setIsLoadingMatches(false);
+    // A LIVE match that vanishes from a fresh feed has concluded —
+    // never leave an open page stuck on LIVE after the result.
+    setSelectedMatch((prev) => {
+      if (prev && prev.status === 'LIVE' && !live.some((m) => m.id === prev.id)) {
+        return { ...prev, status: 'FINISHED' as const };
+      }
+      return prev;
+    });
   }, []);
 
-  // Poll the verified API every 30s (server caches upstream for 60s).
+  // Poll the verified API every 30s (server caches upstream briefly).
   useEffect(() => {
     pollLiveMatches();
     const interval = setInterval(pollLiveMatches, 30_000);
